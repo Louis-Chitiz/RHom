@@ -1,5 +1,5 @@
 import pandas as pd
-from ThoughtSpace.rhom import splithalf, omni_sample, dir_proj, bypc
+from RHom.rhom import splithalf, omni_sample, dir_proj, bypc
 
 df = pd.read_csv('output.csv')
 
