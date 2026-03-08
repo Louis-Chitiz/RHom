@@ -1,9 +1,9 @@
-Metadata-Version: 2.1
-Name: ThoughtSpace
+Metadata-Version: 1.0
+Name: RHom
 Version: 0.0.1
-Summary: Package of functions to run and visualize PCA on ESQ data, and project between datasets.
-Author: Bronte Mckeown & Will Strawson
-Author-email: bronte.mckeown@gmail.com
+Summary: Package of functions to run, visualize and test the robustness of PCA
+Author: Louis Chitiz
+Author-email: louischitiz@gmail.com
 Requires-Dist: matplotlib>=3.2.0
 Requires-Dist: numpy>=1.16
 Requires-Dist: pandas>=1.1.4
