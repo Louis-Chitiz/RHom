@@ -11,15 +11,15 @@ from scipy.linalg import eigh
 
 from sklearn.preprocessing import StandardScaler
 
-from ThoughtSpace.plotting import save_wordclouds, plot_scree,plot_stats
-from ThoughtSpace.utils import setupanalysis, returnhighest, clean_substrings
+from RHom.plotting import save_wordclouds, plot_scree,plot_stats
+from RHom.utils import setupanalysis, returnhighest, clean_substrings
 import os
 
 from sklearn.model_selection import KFold, BaseCrossValidator
 
 class basePCA(TransformerMixin, BaseEstimator):
     """
-    A base class for performing Principal Component Analysis (PCA) with ThoughtSpace.
+    A base class for performing Principal Component Analysis (PCA) with RHom.
 
     Args:
         n_components (int or "infer", optional): The number of components to keep. If "infer", the number of components is determined based on the explained variance. Defaults to "infer".
