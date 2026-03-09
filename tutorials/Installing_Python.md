@@ -70,5 +70,5 @@ Common distributions include:
 These distributions often include helpful tools such as:
 - Package managers (to easily install libraries)
 - Scientific Python libraries
-- Development environments like Jupyter Notebook or Spyder
+- Development environments (e.g., VS Code, Spyder, Jupyter Notebook)
 
