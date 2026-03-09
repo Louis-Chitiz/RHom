@@ -4,10 +4,9 @@ Welcome to RHom.
 
 RHom is a Python-based toolbox for running, visualizing, and testing the robustness of different forms of PCA.
 
-This readme is intended for novices and assumes little-to-no prior knowledge of coding and GitHub. It will take you from installation through your first analysis, with examples. Starting off with some quick housekeeping, make sure to have a setup prepared for coding with Python. 
+This readme is intended for novices and assumes little-to-no prior knowledge of coding and GitHub. It will take you from installation through your first analysis, with examples. 
 
-Here's a tutorial for how to install Python (directly or as part of a Python distribution) and a complementary code editor: [Installing Python and a Code Editor](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Installing_Python.md)
-
+Before anything, make sure you have Python and a complementary code editor installed. Here's a tutorial: [Installing Python and a Code Editor](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Installing_Python.md)
 
 ## Setting Up and Running RHom
 
