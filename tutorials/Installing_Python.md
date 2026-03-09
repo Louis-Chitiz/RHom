@@ -1,4 +1,4 @@
-## Installing Python and an Interpreter
+## Installing Python and a Code Editor
 
 To use this toolbox, you will need **Python** and a way to run Python code (an **interpreter**).
 
@@ -46,9 +46,9 @@ python --version
 Python 3.11.6
 ```
 
-#### 4. Install a Code Interpreter/Editor (Recommended)
+#### 4. Install a Code Editor (Recommended)
 
-While Python can run directly in the terminal, it is easier to write code in an editor.
+While Python can run directly in the terminal, code editors help you write, edit, and debug code easily in various programming languages.
 
 Here are some popular, free options:
 
