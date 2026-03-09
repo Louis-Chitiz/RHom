@@ -1,6 +1,6 @@
 ## Running your first PCA analysis
 
-We are now ready to run your first ThoughtSpace analysis!
+We are now ready to run your first RHom analysis!
 
 **1. Open visual studio code**
 
@@ -8,17 +8,16 @@ We are now ready to run your first ThoughtSpace analysis!
     
 **3. Type the following and save the file:**
 
-In the example pasted below, change the file path to your own csv file stored in your own data directory or alternatively, use the URL method pasted below to use the example data available on ThoughtSpace.
+In the example pasted below, change the file path to your own csv file stored in your own data directory or alternatively, use the URL method pasted below to use the example data available on RHom.
 
-Using URL method to read in example data (daily life experience sampling data before and during lockdown in the UK): 
+Using URL method to read in example data (experience sampling data from lab and daily life in Canada): 
 
 ```python
 import pandas as pd # for reading in the csv file containg the data
-from ThoughtSpace.pca import basePCA # this imports the basePCA class from ThoughtSpace
+from RHom.pca import basePCA # this imports the basePCA class from RHom
 
 # read in data
-url = 'https://github.com/Bronte-Mckeown/ThoughtSpace/tree/master/scratch/data/example_data.csv'
-df = pd.read_csv(url)
+df = pd.read_csv(data/example_data.csv)
 
 # sets up PCA object, asking for 4 components with varimax rotation
 model = basePCA(n_components=4,rotation="varimax")
@@ -39,7 +38,7 @@ Things to note about the data format required:
 
 ```python
 import pandas as pd # for reading in your csv
-from ThoughtSpace.pca import basePCA # to use ThoughtSpace
+from RHom.pca import basePCA # to use RHom
 
 # read in data
 df = pd.read_csv("data/lockdown_data.csv")
@@ -55,7 +54,7 @@ pca_scores = model.fit_transform(df)
 model.save(path="results",pathprefix="PCA_results")
 ```
 
-**4. Before running this file, select the conda environment you have created which has ThoughtSpace installed in.**
+**4. Before running this file, select the conda environment you have created which has RHom installed in.**
 
 You now need to select the correct Python interpreter by opening the Command Palette (Ctrl+Shift+P), typing "Python: Select Interpreter," and choosing the interpreter from the list of detected Python interpreters.
 
@@ -113,7 +112,7 @@ Finally, the wordclouds directory contains png images of wordclouds representing
     
 ## Push your changes to remote
     
-You have now run your first ThoughtSpace analysis in your own (local) Github repository.
+You have now run your first RHom analysis in your own (local) Github repository.
     
 It is now a good idea to 'push' your changes.
 
