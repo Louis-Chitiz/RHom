@@ -3,7 +3,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolor
 import matplotlib.pyplot as plt
 import numpy as np
-from ThoughtSpace.utils import clean_substrings, returnhighest
+from RHom.utils import clean_substrings, returnhighest
 from wordcloud import WordCloud
 import pandas as pd
 from scipy.ndimage import gaussian_filter
