@@ -25,7 +25,7 @@ class basePCA(TransformerMixin, BaseEstimator):
         n_components (int or "infer", optional): The number of components to keep. If "infer", the number of components is determined based on the explained variance. Defaults to "infer".
         verbosity (int, optional): The level of verbosity. Set to 0 for no output, 1 for basic output, and 2 for detailed output. Defaults to 1.
         rotation (str or bool, optional): The rotation method to use for the loadings. If False, no rotation is performed. Supported methods are "varimax", "promax", "oblimin", "oblimax", "quartimin", "quartimax", and "equamax". Defaults to "varimax".
-
+        
     Attributes:
         n_components (int or "infer"): The number of components to keep.
         verbosity (int): The level of verbosity.
@@ -168,49 +168,6 @@ class basePCA(TransformerMixin, BaseEstimator):
         """
         self.scaler = StandardScaler()
         return pd.DataFrame(self.scaler.fit_transform(df))
-
-    # def naive_pca(self, df: pd.DataFrame) -> Tuple[PCA, pd.DataFrame]:  # type: ignore
-    #     """
-    #     Perform Principal Component Analysis (PCA) on the input dataframe.
-
-    #     Args:
-    #         df (pd.DataFrame): The dataframe to be used for PCA.
-
-    #     Returns:
-    #         Tuple[PCA, pd.DataFrame]: A tuple containing the PCA object and the loadings dataframe.
-
-    #     Raises:
-    #         TypeError: If the rotation type is not supported.
-
-    #     """
-    #     if self.n_components == "infer":
-    #         self.fullpca = PCA(svd_solver="full").fit(df)
-    #         self.n_components = len([x for x in self.fullpca.explained_variance_ if x >= 1])
-    #         if self.verbosity > 0:
-    #             print(f"Inferred number of components: {self.n_components}")
-    #     else:
-    #         self.fullpca = PCA(svd_solver="full").fit(df)
-    #     pca = PCA(n_components=self.n_components,svd_solver="full").fit(df)
-        
-    #     if self.rotation == False:
-    #         loadings = pca.components_.T
-    #     elif self.rotation in ["varimax","promax","oblimin","oblimax","quartimin","quartimax","equamax"]:
-    #         loadings = Rotator(method=self.rotation).fit_transform(pca.components_.T)
-    #     else:
-    #         raise "Rotation type is not supported"
-        
-    #     loadings = pd.DataFrame(
-    #         loadings,
-    #         index=self.items,
-    #         columns=[f"PC{x+1}" for x in range(self.n_components)],
-    #     )
-    #     averages = loadings.mean(axis=0).to_dict()
-    #     for col in averages:
-    #         if averages[col] < 0:
-    #             if self.verbosity > 1:
-    #                 print(f"Component {col} has mostly negative loadings, flipping component")
-    #             loadings[col] = loadings[col] * -1
-    #     return loadings
 
     def naive_pca(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
