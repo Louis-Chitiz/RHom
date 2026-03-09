@@ -5,7 +5,7 @@ from itertools import combinations
 from itertools import permutations
 from itertools import product
 
-from ThoughtSpace.pca import basePCA
+from RHom.pca import basePCA
 
 import numpy as np
 import os
@@ -1478,8 +1478,8 @@ def bypc(df=None, group=None, npc=None,
         .csv:
             If save=True, will save /results to a csv.
 
-        thoughtspace PCA results:
-            If plot=True, will save the results, including wordclouds and Scree plot, for the omnibus set in a thoughtspace folder.
+        RHom PCA results:
+            If plot=True, will save the results, including wordclouds and Scree plot, for the omnibus set in a RHom folder.
 
         printed results:
             If display=True, prints the output directly in the terminal.
