@@ -2,29 +2,20 @@
 
 Welcome to RHom. 
 
-RHom is a Python-based toolbox for analysing experience sampling data via Principal Components Analysis (PCA) to identify common "patterns of thought".
+RHom is a Python-based toolbox for running, visualizing, and testing the robustness of different forms of PCA.
 
-## A Beginners Guide
+This readme is intended for novices and assumes little-to-no prior knowledge of coding and GitHub. It will take you from installation through your first analysis, with examples.
 
-This readme is a Beginners guide to using RHom that assumes little-to-no prior knowledge of coding and GitHub. 
-
-It does assume you already have a GitHub account set up. So, if you don't, create one first!
-
-The guide will take you through installation and your first analysis, with examples:
-
-- [Installing Github Desktop](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Installing_GitHub_Desktop.md)
 - [Setting Up Visual-Studio Code](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Installing_VS_Code.md)
 - [Setting Up Python in VSCode](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Setting_Up_Python.md)
 
 ## Setting Up and Running RHom
 
-If you have the necessary interpreter and programming steps set up, you can get into preparing and running RHom.
-
-If you're new to GitHub, here's a guide to forking and cloning the RHom repository:
+To use this repository for your own purposes, you'll have to *fork* off a personal copy and *clone* it to your computer:
 
 - [Fork and Clone RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Fork_and_Clone_RHom.md)
 
-Once you've set up a local (and forked) RHom repository on your computer, you can set up a virtual environment for using RHom:
+Once you've set up a local fork of the RHom repository on your computer, you can set up a virtual environment for using RHom:
 
 - [Setting Up RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Set_Up_RHom.md)
     - [Updating RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/updating_RHom.md)
