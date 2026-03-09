@@ -22,12 +22,12 @@ If you have the necessary interpreter and programming steps set up, you can get 
 
 If you're new to GitHub, here's a guide to forking and cloning the RHom repository:
 
-- [Fork and Clone RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Fork_and_Clone_ThoughtSpace.md)
+- [Fork and Clone RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Fork_and_Clone_RHom.md)
 
 Once you've set up a local (and forked) RHom repository on your computer, you can set up a virtual environment for using RHom:
 
-- [Setting Up RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Set_Up_ThoughtSpace.md)
-    - [Updating RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/updating_thoughtspace.md)
+- [Setting Up RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/Set_Up_RHom.md)
+    - [Updating RHom](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/updating_RHom.md)
 
 - [Running Your First PCA Analysis](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/First_PCA_Analysis.md)
 
