@@ -14,7 +14,7 @@ Using URL method to read in example data (experience sampling data from lab and 
 
 ```python
 import pandas as pd # for reading in the csv file containg the data
-from RHom.pca import basePCA # this imports the basePCA class from RHom
+from RHom import basePCA # this imports the basePCA class from RHom
 
 # read in data
 df = pd.read_csv(data/example_data.csv)
