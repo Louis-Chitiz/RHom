@@ -38,7 +38,7 @@ Things to note about the data format required:
 
 ```python
 import pandas as pd # for reading in your csv
-from RHom.pca import basePCA # to use RHom
+from RHom import basePCA # to use RHom
 
 # read in data
 df = pd.read_csv("data/lockdown_data.csv")
