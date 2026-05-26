@@ -7,3 +7,4 @@ build
 *.csv
 .vscode/settings.json
 *.pyc
+environment.yml

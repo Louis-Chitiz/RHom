@@ -1,7 +1,7 @@
-Metadata-Version: 1.0
+Metadata-Version: 2.1
 Name: RHom
 Version: 0.0.1
-Summary: Package of functions to run, visualize and test the robustness of PCA
+Summary: Package of functions to run and visualize PCA on ESQ data, and project between datasets.
 Author: Louis Chitiz
 Author-email: louischitiz@gmail.com
 Requires-Dist: matplotlib>=3.2.0

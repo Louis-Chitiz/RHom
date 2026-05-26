@@ -1,11 +1,23 @@
 import pandas as pd
-from ThoughtSpace.pca import basePCA
+from RHom.pca import basePCA
 
-data = pd.read_csv("examples/output.csv")
+konu21 = pd.read_csv("konu2021.csv")
 
-model = basePCA(n_components=4,rotation="promax")
+konu_esq = konu21.loc[:, "Focus":"Source"]
+konu_esq = konu_esq.rename(columns={'Focus':"Task",
+                           "Other":"People"})
 
-projected_results = model.fit_transform(data)
+konu_esq['dataset'] = 'Konu'
+konu_esq['ID'] = konu21['Participant_number']
+konu_esq = konu_esq.dropna()
+
+model = basePCA(n_components=4,rotation="varimax")
+
+
+
+projected_results = model.fit_transform(konu_esq)
 model.save(path="results",pathprefix="PCA_results")
+
+
 
 
