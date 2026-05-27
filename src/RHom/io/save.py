@@ -1,11 +1,11 @@
-from RHom._deps import pd, randint, plt
+from .._deps import pd, randint, plt
 
 import os
 from datetime import datetime
 from pathlib import Path
 
-from RHom.visualization.pcastats import plot_scree, plot_stats, display_explained_variance
-from RHom.visualization.wordclouds import save_wordclouds
+from ..visualization.pcastats import plot_scree, plot_stats, display_explained_variance
+from ..visualization.wordclouds import save_wordclouds
 
 def setupanalysis(
     path: str = None, pathprefix: str = "analysis", includetime: bool = True

@@ -1,11 +1,18 @@
-from RHom._deps import os, pd, np, copy, randint, norm, plt, sns, combinations, StandardScaler
+from .._deps import pd, np, randint, plt, StandardScaler
 
-from RHom.core.base_pca import basePCA
-from RHom.rhom import bootstrap
-from RHom.rhom.metrics import rhom
-from RHom.rhom.resampling import pair_cv
-from RHom.rhom.bootstrap import BootstrapEngine
-from RHom.io.save import setupanalysis
+import os
+import copy
+import warnings
+
+import seaborn as sns
+
+from itertools import combinations
+
+from ..core.base_pca import basePCA
+from .metrics import rhom
+from .resampling import pair_cv
+from .bootstrap import BootstrapEngine
+from ..io.save import setupanalysis
 
 def _summary_stats(distribution, alpha=0.05):
     """Internal statistical helper to calculate confidence intervals."""
@@ -54,8 +61,30 @@ def _export_report(df, path, prefix, suffix):
     df.to_csv(full_path, index=False)
     print(f"Dataframe saved to: {full_path}")
 
-def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', 
-              boot=1000, save=True, display=False, shuffle=False, 
+def _check_rank(df_numeric):
+    """
+    Warns once if the full-sample data matrix is rank-deficient.
+
+    A rank below the number of variables means the correlation matrix is singular,
+    which destabilises the PCA decomposition (and is what triggers the per-fold
+    Moore-Penrose warnings during resampling).
+    """
+    arr = df_numeric.values if hasattr(df_numeric, "values") else np.asarray(df_numeric)
+    n_features = arr.shape[1]
+    rank = np.linalg.matrix_rank(arr - arr.mean(axis=0))
+
+    if rank < n_features:
+        warnings.warn(
+            f"Data matrix is rank-deficient (rank {rank} of {n_features} variables). "
+            "Likely causes: collinear/duplicate items, a constant column, compositional/ipsative "
+            "data summing to a constant, or fewer observations than variables. The PCA will still "
+            "run, but trailing components carry no real variance and reproducibility scores may be "
+            "unreliable.",
+            stacklevel=2,
+        )
+
+def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
+              boot=1000, save=True, display=False, shuffle=False, cluster=None,
               path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
@@ -75,6 +104,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
 
         group: str, default=None
             The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -112,11 +148,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
             If display=True, prints the output directly in the terminal.
     """
     
-    df_t = df.drop(labels=[group], axis=1) if group else df
+    drop_cols = [c for c in (group, cluster) if c is not None]
+    df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
     samples = df[group].unique() if group else ['fulldata']
-    
+    _check_rank(df_t)
+
     boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc, method=method, rotation=rotation)
-    cv = pair_cv(group=group, n=boot)
+    cv = pair_cv(group=group, cluster=cluster, n=boot)
     
     boot_engine = BootstrapEngine(
         estimator=boot_model, 
@@ -146,7 +184,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
     return split_df
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-             save=True, plot=True, display=False, shuffle=False, 
+             save=True, plot=True, display=False, shuffle=False, cluster=None,
              path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
@@ -166,6 +204,13 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
 
         group: str, default=None
             The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -208,15 +253,20 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
         printed results:
             If display=True, prints the output directly in the terminal.
     """
+    cl = [cluster] if cluster else []
     groups = df[group].unique()
+    # maindict retains the cluster column so folds can keep whole units together; it is
+    # stripped from the decomposition inside pair_cv._make_folds.
     maindict = {g: df[df[group] == g].drop(labels=group, axis=1) for g in groups}
     pairings = list(combinations(groups, 2))
-    
+
     scaler = StandardScaler()
-    df_scaled = pd.DataFrame(scaler.fit_transform(df.drop(labels=group, axis=1)), columns=df.columns.drop(group))
-    
+    feat_cols = df.columns.drop([group, *cl])
+    df_scaled = pd.DataFrame(scaler.fit_transform(df[feat_cols]), columns=feat_cols)
+    _check_rank(df_scaled)
+
     boot_model = rhom(rd=copy.deepcopy(df_scaled.values), n_comp=npc, method=method, rotation=rotation)
-    cv = pair_cv(boot=True, k=folds)
+    cv = pair_cv(boot=True, k=folds, cluster=cluster)
     
     boot_engine = BootstrapEngine(
         estimator=boot_model, 
@@ -230,7 +280,10 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
     dirproj_phi = pd.DataFrame(1.0, columns=groups, index=groups) if plot else None
     
     for ref, comp in pairings:
-        print(f"Running Matrix Path: {ref} x {comp}")
+        print(f"Running {ref} x {comp}")
+
+        _check_rank(maindict[ref].drop(labels=cl, axis=1))
+        _check_rank(maindict[comp].drop(labels=cl, axis=1))
         # Execute using referent and comparator subsets
         results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
         
@@ -248,12 +301,44 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
     dirproj_df = pd.DataFrame(rows)
     
     if plot:
+        setupanalysis(path, file_prefix, includetime=False)
         plt.close('all')
+        n = len(dirproj_mtx)
+        # Show each group pair once: mask the diagonal and the upper triangle.
+        mask = np.triu(np.ones((n, n), dtype=bool))
+        lower = ~mask
+        cell = max(0.5, min(1.0, 10.0 / n))   # inches per cell; caps the figure as n grows
+        fs = max(6, cell * 13)                # annotation + label font tracks cell size
+
         for mtx, name, label in [(dirproj_mtx, 'rhm', 'Mean Homologue Similarity'), (dirproj_phi, 'phi', 'Mean Factor Congruence')]:
-            sns.heatmap(mtx, vmin=mtx.values.min(), annot=True, annot_kws={"fontsize": 35 / np.sqrt(len(mtx))}, cmap="flare")
-            plt.suptitle(label, fontsize=16)
-            plt.savefig(os.path.join(path, f"{file_prefix}/{file_prefix}_heatmap{len(df_scaled.columns)}D_{npc}PC_{name}.png"))
-            plt.show(); plt.close()
+            shown = mtx.values[lower]
+            annot = np.vectorize(lambda v: f"{v:.2f}".lstrip("0"))(mtx.values)
+            fig, ax = plt.subplots(figsize=(n * cell + 2, n * cell + 2))
+            sns.heatmap(
+                mtx,
+                mask=mask,
+                vmin=shown.min(),
+                vmax=shown.max(),
+                annot=annot,
+                fmt="",
+                annot_kws={"fontsize": fs},
+                cmap="flare",
+                square=True,
+                linewidths=0.5,
+                cbar_kws={"shrink": 0.6, "label": label},
+                ax=ax,
+            )
+            ax.set_title(label, fontsize=16, pad=12)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=fs)
+            ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=fs)
+            fig.tight_layout()
+            fig.savefig(
+                os.path.join(path, f"{file_prefix}/{file_prefix}_heatmap{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
+                bbox_inches="tight",
+                dpi=150,
+            )
+            plt.show()
+            plt.close(fig)
             
     if save:
         _export_report(dirproj_df, path, file_prefix, f"dj{len(df_scaled.columns)}D_{npc}PC")
@@ -261,7 +346,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
     return dirproj_df
 
 def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", boot=1000,
-                save=True, display=False, shuffle=False, path='results', file_prefix=randint(10000, 99999)):
+                save=True, display=False, shuffle=False, cluster=None, path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus-Sample Reproducibility
     ------------------------------
@@ -283,6 +368,13 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
 
         group: str, default=None
             The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -320,11 +412,13 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
             If display=True, prints the output directly in the terminal.
     """
 
+    drop_cols = [c for c in (group, cluster) if c is not None]
     samples = df[group].unique()
-    df_t = df.drop(labels=[group], axis=1)
-    
+    df_t = df.drop(labels=drop_cols, axis=1)
+    _check_rank(df_t)
+
     boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc, method=method, rotation=rotation)
-    cv = pair_cv(omnibus=True, group=group, n=boot)
+    cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot)
     
     # Initialize engine for omnibus resampling profile
     boot_engine = BootstrapEngine(
@@ -366,7 +460,7 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     return omsamp_df
 
 def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-         save=True, plot=True, display=False, shuffle=False, path='results', file_prefix=randint(10000, 99999)):
+         save=True, plot=True, display=False, shuffle=False, cluster=None, path='results', file_prefix=randint(10000, 99999)):
     
     """    
     Omnibus-Sample Reproducibility: By-Component
@@ -390,6 +484,13 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
 
         group: str, default=None
             The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -433,9 +534,11 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
             If display=True, prints the output directly in the terminal.
     """
 
-    df_t = df.drop(labels=group, axis=1)
+    drop_cols = [c for c in (group, cluster) if c is not None]
+    df_t = df.drop(labels=drop_cols, axis=1)
+    _check_rank(df_t)
     boot_model = rhom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc, method=method, rotation=rotation)
-    cv = pair_cv(boot=True, group=group, k=folds)
+    cv = pair_cv(boot=True, group=group, cluster=cluster, k=folds)
     
     nval = (df[group].value_counts().min()) / 2
     maindict = cv.omni_prep(df=df, subrows=nval)

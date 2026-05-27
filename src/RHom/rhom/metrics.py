@@ -1,12 +1,10 @@
-from RHom._deps import pd, np, plt, randint, BaseEstimator, StandardScaler, KFold, BaseCrossValidator, pearsonr
-from RHom.core.base_pca import basePCA
-
-from itertools import permutations
+from .._deps import pd, np, BaseEstimator, KFold, BaseCrossValidator, pearsonr
+from ..core.base_pca import basePCA
 
 from scipy.linalg import orthogonal_procrustes
 from scipy.optimize import linear_sum_assignment
 
-from RHom.preprocessing.data_utils import tcc
+from ..preprocessing.data_utils import tcc
 
 
 class rhom(BaseEstimator):

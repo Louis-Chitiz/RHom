@@ -1,4 +1,4 @@
-from RHom._deps import pd, np, StandardScaler
+from .._deps import pd, np
 
 def rename_special_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Standardizes domain-specific column naming."""

@@ -1,6 +1,6 @@
-from RHom._deps import pd, np, Any, Dict, List, Optional, Union
+from .._deps import pd, np, Any, Dict, Optional
 
-from RHom.preprocessing.data_utils import fullmantel
+from ..preprocessing.data_utils import fullmantel
 
 class BootstrapEngine:
     """

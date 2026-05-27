@@ -1,12 +1,11 @@
-from RHom._deps import pd, randint, BaseEstimator, TransformerMixin, StandardScaler
-import os
+from .._deps import pd, randint, BaseEstimator, TransformerMixin, StandardScaler
 
-from src.RHom.preprocessing.preliminary import check_stats
-from RHom.preprocessing.data_utils import rename_special_columns, flip_loadings
-from RHom.preprocessing.validation import check_inputs
+from ..preprocessing.preliminary import check_stats
+from ..preprocessing.data_utils import rename_special_columns, flip_loadings
+from ..preprocessing.validation import check_inputs
 
-from RHom.core.decomposition import run_svd, run_eigen, rotation
-from RHom.io.save import run_save_sequence
+from ..core.decomposition import run_svd, run_eigen, rotation
+from ..io.save import run_save_sequence
 
 class basePCA(TransformerMixin, BaseEstimator):
     """
@@ -80,7 +79,8 @@ class basePCA(TransformerMixin, BaseEstimator):
         Fits the PCA model: Validates data, performs decomposition, and calculates scores.
         """
         # Standardize and Backup
-        _df = rename_special_columns(df.copy())
+        # _df = rename_special_columns(df.copy())
+        _df = df.copy()
         if self.ogdf is None:
             self.ogdf = _df.copy()
 

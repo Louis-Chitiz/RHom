@@ -1,4 +1,4 @@
-from RHom._deps import pd, np, StandardScaler
+from .._deps import pd, np, StandardScaler
 from typing import Dict, List, Tuple, Generator, Optional, Union
 from itertools import combinations, product
 
@@ -20,7 +20,11 @@ class pair_cv():
             - Whether to bootstrap resample according to omnibus-sample reproducibility or split-half reliability.
         - group: str, default=None
             - The name of the column to be the selection variable by which to conduct separate reproducibility analyses.
-        
+        - cluster: str, default=None
+            - The name of a level-2 / clustering column (e.g. participant ID). When set, whole clusters
+              are kept together in every split, fold, and bootstrap draw so a unit never appears on both
+              sides of a comparison. Prevents leakage and pseudoreplication with nested data.
+
     Attributes
     ----------
         - scaler: StandardScaler
@@ -52,17 +56,19 @@ class pair_cv():
 
     def __init__(
             self, 
-            k: int = 5, 
-            n: int = 1000, 
-            boot: bool = False, 
-            omnibus: bool = False, 
-            group: Optional[str] = None
+            k: int = 5,
+            n: int = 1000,
+            boot: bool = False,
+            omnibus: bool = False,
+            group: Optional[str] = None,
+            cluster: Optional[str] = None
         ) -> None:
             self.n_splits = k
             self.n_redists = n
             self.boot = boot
             self.omnibus = omnibus
             self.group = group
+            self.cluster = cluster
 
     @staticmethod
     def standardize(df: pd.DataFrame) -> pd.DataFrame:
@@ -72,38 +78,112 @@ class pair_cv():
 
     def _assign_model(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Consolidated helper to split a frame into two standardized halves based on a mask.
-        Returns (target_half, remaining_half)
+        Consolidated helper to split a frame into two standardized halves.
+
+        When `cluster` is set, whole level-2 units are kept together (a cluster is
+        never split across the two halves); otherwise rows are split directly.
+        Returns (target_half, remaining_half).
         """
         df = df.copy()
-        np.random.shuffle(mask)
-        df['_mask'] = mask
-        
-        half1 = df[df['_mask'] == target_val].drop(labels=[self.group, '_mask'] if self.group in df else ['_mask'], axis=1, errors='ignore')
-        half2 = df[df['_mask'] != target_val].drop(labels=[self.group, '_mask'] if self.group in df else ['_mask'], axis=1, errors='ignore')
-        
+        is_target = self._target_mask(df, mask, target_val)
+
+        drop = [c for c in (self.group, self.cluster) if c and c in df.columns]
+        half1 = df[is_target].drop(labels=drop, axis=1, errors='ignore')
+        half2 = df[~is_target].drop(labels=drop, axis=1, errors='ignore')
+
         return self.standardize(half1), self.standardize(half2)
+
+    def _target_mask(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int]) -> np.ndarray:
+        """
+        Boolean row selector for the target subset.
+
+        With `cluster` set, whole level-2 units are selected together until the target row
+        count is reached; otherwise the row mask is shuffled and applied directly.
+        """
+        if self.cluster and self.cluster in df.columns:
+            target_size = int(np.sum(np.asarray(mask) == target_val))
+            return df.index.isin(self._cluster_partition(df, target_size))
+
+        mask = np.array(mask, copy=True)
+        np.random.shuffle(mask)
+        return np.asarray(mask) == target_val
+
+    def _cluster_partition(self, df: pd.DataFrame, target_size: int) -> np.ndarray:
+        """Pick whole clusters (shuffled) until at least `target_size` rows are gathered."""
+        clusters = df[self.cluster].unique().copy()
+        np.random.shuffle(clusters)
+
+        chosen, count = [], 0
+        for c in clusters:
+            rows = np.asarray(df.index[df[self.cluster] == c])
+            chosen.append(rows)
+            count += len(rows)
+            if count >= target_size:
+                break
+
+        return np.concatenate(chosen) if chosen else np.asarray([])
+
+    def _to_features(self, data: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Return decomposition columns as a numpy array, dropping any group/cluster labels."""
+        if hasattr(data, 'columns'):
+            drop = [c for c in (self.group, self.cluster) if c and c in data.columns]
+            data = data.drop(labels=drop, axis=1) if drop else data
+            return np.array(data.values, copy=True)
+        return np.array(data, copy=True)
+
+    def _make_folds(self, data: Union[pd.DataFrame, np.ndarray]) -> List[np.ndarray]:
+        """
+        Partition rows into `n_splits` folds.
+
+        With `cluster` set (and present on a DataFrame), whole level-2 units are assigned
+        to folds so a cluster never spans two folds (requires at least `n_splits` distinct
+        clusters). Otherwise rows are shuffled and split directly.
+        """
+        if self.cluster and hasattr(data, 'columns') and self.cluster in data.columns:
+            clusters = data[self.cluster].unique().copy()
+            np.random.shuffle(clusters)
+            labels = data[self.cluster].values
+            feat = self._to_features(data)
+            return [feat[np.isin(labels, fold)] for fold in np.array_split(clusters, self.n_splits)]
+
+        arr = self._to_features(data)
+        np.random.shuffle(arr)
+        return np.array_split(arr, self.n_splits)
     
     def omni_prep(self, df: pd.DataFrame, subrows: Optional[Union[int, float]] = None) -> Dict[str, pd.DataFrame]:
-        """Prepares data for by-component omnibus-sample reproducibility."""
-        
+        """
+        Prepares data for by-component omnibus-sample reproducibility.
+
+        Returns a dict keyed by each group value (its sample subset) plus "omnibus"
+        (the standardized aggregate of every group's omnibus portion). The per-sample
+        frames keep the cluster column and stay unstandardized so the downstream CV folds
+        in `bypc_split` remain cluster-aware; the estimator standardizes each fold itself.
+        """
         if self.group is None:
             raise ValueError("Group column must be specified for omnibus preprocessing.")
-            
+
         samples = df[self.group].unique()
-        models = {}
+        models: Dict[str, pd.DataFrame] = {}
         omnibus_chunks = []
 
         for sample in samples:
-            subsamp_df = df[df[self.group] == sample]
-            
+            subsamp_df = df[df[self.group] == sample].copy()
+
             mask = np.full(subsamp_df.shape[0], "omnibus", dtype=object)
             if subrows is not None:
                 mask[:int(subrows)] = "sample"
-                
-            sample_df, omni_df = self._assign_model(subsamp_df, mask, "sample")
-            models[str(sample)] = sample_df
-            omnibus_chunks.append(omni_df)
+
+            is_sample = self._target_mask(subsamp_df, mask, "sample")
+
+            # Sample side: drop only the group label, keep the cluster column for fold-level CV.
+            models[sample] = subsamp_df[is_sample].drop(labels=self.group, axis=1, errors='ignore')
+
+            # Omnibus side: decomposed whole, so make it feature-only (group + cluster removed).
+            omni_drop = [c for c in (self.group, self.cluster) if c and c in subsamp_df.columns]
+            omnibus_chunks.append(subsamp_df[~is_sample].drop(labels=omni_drop, axis=1, errors='ignore'))
+
+        models["omnibus"] = self.standardize(pd.concat(omnibus_chunks, axis=0))
+        return models
 
     def omni_prep_mini(
         self, 
@@ -139,14 +219,8 @@ class pair_cv():
     def split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         """Generate indices to split data into referent and comparate sets."""
         foldidx = list(range(self.n_splits))
-        X_arr = np.array(X.values if hasattr(X, 'values') else X, copy=True)
-        y_arr = np.array(y.values if hasattr(y, 'values') else y, copy=True)
-
-        np.random.shuffle(X_arr)
-        np.random.shuffle(y_arr)
-        
-        x1_c = np.array_split(X_arr, self.n_splits)
-        x2_c = np.array_split(y_arr, self.n_splits)
+        x1_c = self._make_folds(X)
+        x2_c = self._make_folds(y)
 
         if not self.boot:
             for fold in product(foldidx, repeat=2):
@@ -165,12 +239,9 @@ class pair_cv():
     def bypc_split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         """Generate indices to split data into referent and comparate sets based on grouping."""
         foldidx = list(range(self.n_splits))
-        X_arr = np.array(X.values if hasattr(X, 'values') else X, copy=True)
-        y_arr = np.array(y.values if hasattr(y, 'values') else y, copy=True)
+        X_arr = self._to_features(X)
+        x_c = self._make_folds(y)
 
-        np.random.shuffle(y_arr)
-        x_c = np.array_split(y_arr, self.n_splits)
-        
         if not self.boot:
             for z in product(foldidx, repeat=2):
                 yield X_arr, x_c[z[1]]

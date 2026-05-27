@@ -1,4 +1,4 @@
-from RHom._deps import pd, np, Tuple, List, Union, Any, npt
+from .._deps import pd, np, Tuple, List, Union, Any, npt
 
 
 def check_inputs(

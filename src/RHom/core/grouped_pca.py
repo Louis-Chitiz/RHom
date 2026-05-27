@@ -1,7 +1,6 @@
 #TODO update groupedPCA
-from RHom._deps import pd, StandardScaler
-
-from RHom import basePCA
+from .._deps import pd, StandardScaler
+from .. import basePCA
 
 class groupedPCA(basePCA):
     """

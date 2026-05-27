@@ -1,4 +1,4 @@
-from RHom._deps import pd, np, Tuple, PCA, eigh, Rotator, Union
+from .._deps import pd, np, Tuple, PCA, eigh, Rotator, Union
 
 def run_svd(df: pd.DataFrame, n_components: Union[int, str] = "infer", verbosity: int = 0):
     """

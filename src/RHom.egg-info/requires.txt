@@ -1,0 +1,10 @@
+matplotlib
+numpy
+pandas
+scipy
+seaborn
+matplotlib
+scikit-learn
+adjustText
+wordcloud
+factor_analyzer

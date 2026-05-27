@@ -1,4 +1,4 @@
-from RHom._deps import pd
+from .._deps import pd
 from factor_analyzer import calculate_bartlett_sphericity, calculate_kmo
 
 def check_stats(df: pd.DataFrame, verbosity: int = 0) -> None:
@@ -9,17 +9,14 @@ def check_stats(df: pd.DataFrame, verbosity: int = 0) -> None:
     Returns:
         None
     """
+    if verbosity == 0:
+        return None
+    
     bart = calculate_bartlett_sphericity(df)
     kmo = calculate_kmo(df)
 
-    if verbosity > 0:
-        print(interpret_bartlett(bart, df))
-        print(interpret_kmo(kmo))
-
-        return
-    
-   
-    return {"bartlett": bart, "kmo": kmo}
+    print(interpret_bartlett(bart, df))
+    print(interpret_kmo(kmo))
 
 def interpret_bartlett(bart, df: pd.DataFrame) -> None:
         
