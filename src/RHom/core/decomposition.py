@@ -21,7 +21,6 @@ def run_svd(df: pd.DataFrame, n_components: Union[int, str] = "infer", verbosity
     model = PCA(n_components=n_components, svd_solver="full").fit(df)
     
     # Calculate loadings: eigenvectors * sqrt(eigenvalues)
-    # loadings = model.components_.T * np.sqrt(model.explained_variance_)
     loadings = model.components_.T * np.sqrt(model.explained_variance_)
     
     return model, loadings, eigenvalues

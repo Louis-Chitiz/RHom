@@ -6,5 +6,6 @@ pca_and_projection.egg-info
 build
 *.csv
 .vscode/settings.json
+results/*
 *.pyc
 environment.yml

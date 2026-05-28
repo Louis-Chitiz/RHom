@@ -1,7 +1,7 @@
 from .._deps import pd, np, BaseEstimator, KFold, BaseCrossValidator, pearsonr
 from ..core.base_pca import basePCA
 
-from scipy.linalg import orthogonal_procrustes
+from scipy.linalg import orthogonal_procrustes, subspace_angles
 from scipy.optimize import linear_sum_assignment
 
 from ..preprocessing.data_utils import tcc
@@ -189,6 +189,36 @@ class rhom(BaseEstimator):
 
         # Pass the constructed matrix to match optimal pairs
         return self.hom_pairs(tcc_matrix)
+
+    def subspace_sim(self):
+        """
+        Subspace similarity via principal (canonical) angles between the two loading subspaces.
+
+        Unlike R-homologue (score similarity) and Tucker's congruence (per-pair loading
+        similarity), this compares the *spaces spanned* by the two sets of loadings. It is
+        invariant to how the components are rotated or ordered within that space, so it
+        answers "do these solutions span the same component space?" rather than "does
+        component i match component j?".
+
+        The cosines of the principal angles are the canonical correlations between the two
+        subspaces, each in [0, 1] (1 = perfectly aligned direction).
+
+        Returns
+        -------
+            similarity : list or float
+                If self.bypc is True, the list of per-angle cosines (descending angle order).
+                Otherwise the mean cosine across principal angles, a single [0, 1] score
+                where 1 indicates identical subspaces.
+        """
+        loadings_x = self.model_x.loadings.to_numpy()
+        loadings_x2 = self.model_x2.loadings.to_numpy()
+
+        # subspace_angles orthonormalises each basis internally; no Procrustes alignment needed
+        cosines = np.cos(subspace_angles(loadings_x, loadings_x2))
+
+        if self.bypc:
+            return list(cosines)
+        return float(np.mean(cosines))
 
     def old_cv(self,data,cv=None):
         if not cv:

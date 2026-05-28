@@ -15,6 +15,7 @@ class BootstrapEngine:
             pro_cong: bool = False,
             bypc: bool = False,
             shuffle: bool = False,
+            subspace: bool = False,
             fit_params: Optional[Dict[str, Any]] = None
         ) -> None:
             self.estimator = estimator
@@ -24,6 +25,7 @@ class BootstrapEngine:
             self.pro_cong = pro_cong
             self.bypc = bypc
             self.shuffle = shuffle
+            self.subspace = subspace
             self.fit_params = fit_params or {}
 
     def __call__(self, X: pd.DataFrame, y: Any, group: Optional[str] = None) -> Any:
@@ -43,25 +45,35 @@ class BootstrapEngine:
         else:
             splits = self.cv.split(X, y)
 
-        # Obtains scores and optional phi values for each split
-        scores, phis = [], []
+        # Obtains scores and optional phi / subspace values for each split
+        scores, phis, subs = [], [], []
         for x1, x2 in splits:
             self.estimator.fit(x1, x2, **self.fit_params)
             preds = self.estimator.predict()
             corrs = np.corrcoef(preds[0], preds[1], rowvar=False)
-            
+
             scores.append(self.estimator.hom_pairs(corrs))
             if self.pro_cong:
                 phis.append(self.estimator.pro_cong())
+            if self.subspace:
+                subs.append(self.estimator.subspace_sim())
 
         # Output scores by component if requested
         if self.bypc:
             complist = list(map(list, zip(*scores)))
-            if self.pro_cong:
-                return [complist, list(map(list, zip(*phis)))]
-            return complist
+            result = [complist, list(map(list, zip(*phis)))] if self.pro_cong else complist
+            if self.subspace:
+                if not self.pro_cong:
+                    result = [complist]
+                # Subspace similarity is a whole-solution property, not per-component, so
+                # collapse each split's per-direction cosines to one value reported per sample.
+                result.append([float(np.mean(s)) for s in subs])
+            return result
 
-        # Return overall scores (and optional phis) as lists
-        if self.pro_cong:
-            return [scores, phis]  # Empty list preserves the original 'exp_var' index position
-        return scores
+        # Return overall scores (and optional phis / subspace) as lists
+        result = [scores, phis] if self.pro_cong else scores  # empty phis preserves index position
+        if self.subspace:
+            if not self.pro_cong:
+                result = [scores]
+            result.append(subs)
+        return result

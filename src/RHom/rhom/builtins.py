@@ -4,15 +4,17 @@ import os
 import copy
 import warnings
 
-import seaborn as sns
-
 from itertools import combinations
 
 from ..core.base_pca import basePCA
+from ..preprocessing.preliminary import _check_rank
+from ..io.save import setupanalysis
+from ..visualization.wordclouds import save_wordclouds
+
 from .metrics import rhom
 from .resampling import pair_cv
 from .bootstrap import BootstrapEngine
-from ..io.save import setupanalysis
+
 
 def _summary_stats(distribution, alpha=0.05):
     """Internal statistical helper to calculate confidence intervals."""
@@ -31,19 +33,23 @@ def _summary_stats(distribution, alpha=0.05):
         "UCI": high_ci
     }
 
-def _build_row(n_comp, rhm_data, phi_data=None, metadata=None):
+def _build_row(n_comp, rhm_data, phi_data=None, sub_data=None, metadata=None):
     """Assembles a single unified row mapping for reporting metrics."""
     row = {"n_comp": f"{n_comp}PC" if isinstance(n_comp, int) else n_comp}
     if metadata:
         row.update(metadata)
-        
+
     rhm_stats = _summary_stats(rhm_data)
     row.update({f"rhm_{k}": v for k, v in rhm_stats.items()})
-    
+
     if phi_data is not None:
         phi_stats = _summary_stats(phi_data)
         row.update({f"phi_{k}": v for k, v in phi_stats.items()})
-        
+
+    if sub_data is not None:
+        sub_stats = _summary_stats(sub_data)
+        row.update({f"sub_{k}": v for k, v in sub_stats.items()})
+
     return row
 
 def _display_stats(header, rhm_stats, phi_stats):
@@ -61,30 +67,8 @@ def _export_report(df, path, prefix, suffix):
     df.to_csv(full_path, index=False)
     print(f"Dataframe saved to: {full_path}")
 
-def _check_rank(df_numeric):
-    """
-    Warns once if the full-sample data matrix is rank-deficient.
-
-    A rank below the number of variables means the correlation matrix is singular,
-    which destabilises the PCA decomposition (and is what triggers the per-fold
-    Moore-Penrose warnings during resampling).
-    """
-    arr = df_numeric.values if hasattr(df_numeric, "values") else np.asarray(df_numeric)
-    n_features = arr.shape[1]
-    rank = np.linalg.matrix_rank(arr - arr.mean(axis=0))
-
-    if rank < n_features:
-        warnings.warn(
-            f"Data matrix is rank-deficient (rank {rank} of {n_features} variables). "
-            "Likely causes: collinear/duplicate items, a constant column, compositional/ipsative "
-            "data summing to a constant, or fewer observations than variables. The PCA will still "
-            "run, but trailing components carry no real variance and reproducibility scores may be "
-            "unreliable.",
-            stacklevel=2,
-        )
-
 def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
-              boot=1000, save=True, display=False, shuffle=False, cluster=None,
+              boot=1000, save=True, display=False, shuffle=False, cluster=None, subspace=False,
               path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
@@ -111,6 +95,10 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
             never appears on both sides of a comparison. Prevents leakage and
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -157,21 +145,23 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
     cv = pair_cv(group=group, cluster=cluster, n=boot)
     
     boot_engine = BootstrapEngine(
-        estimator=boot_model, 
-        cv=cv, 
-        splithalf=True, 
-        pro_cong=True, 
-        shuffle=shuffle
+        estimator=boot_model,
+        cv=cv,
+        splithalf=True,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace
     )
-    
+
     rows = []
     for sample in samples:
         print(f"Running Split-Half: {sample}")
         # Execute via the unified __call__ interface
         results = boot_engine(X=df, y=sample, group=group)
-        
+
         meta = {group: sample} if group else {"Group": "fulldata"}
-        row = _build_row(boot_model.n_comp, results[0], results[1], metadata=meta)
+        row = _build_row(boot_model.n_comp, results[0], results[1],
+                         sub_data=results[2] if subspace else None, metadata=meta)
         rows.append(row)
         
         if display:
@@ -184,7 +174,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
     return split_df
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-             save=True, plot=True, display=False, shuffle=False, cluster=None,
+             save=True, plot=True, display=False, shuffle=False, cluster=None, subspace=False,
              path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
@@ -211,6 +201,10 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
             never appears on both sides of a comparison. Prevents leakage and
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -253,6 +247,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
         printed results:
             If display=True, prints the output directly in the terminal.
     """
+    
     cl = [cluster] if cluster else []
     groups = df[group].unique()
     # maindict retains the cluster column so folds can keep whole units together; it is
@@ -269,16 +264,14 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
     cv = pair_cv(boot=True, k=folds, cluster=cluster)
     
     boot_engine = BootstrapEngine(
-        estimator=boot_model, 
-        cv=cv, 
-        pro_cong=True, 
-        shuffle=shuffle
+        estimator=boot_model,
+        cv=cv,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace
     )
-    
+
     rows = []
-    dirproj_mtx = pd.DataFrame(1.0, columns=groups, index=groups) if plot else None
-    dirproj_phi = pd.DataFrame(1.0, columns=groups, index=groups) if plot else None
-    
     for ref, comp in pairings:
         print(f"Running {ref} x {comp}")
 
@@ -286,52 +279,25 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
         _check_rank(maindict[comp].drop(labels=cl, axis=1))
         # Execute using referent and comparator subsets
         results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
-        
+
         meta = {'referent': ref, 'comparator': comp}
-        row = _build_row(boot_model.n_comp, results[0], results[1], metadata=meta)
+        row = _build_row(boot_model.n_comp, results[0], results[1],
+                         sub_data=results[2] if subspace else None, metadata=meta)
         rows.append(row)
-        
-        if plot:
-            for mtx, metric in zip([dirproj_mtx, dirproj_phi], ['rhm_x', 'phi_x']):
-                mtx.loc[ref, comp] = mtx.loc[comp, ref] = row[metric]
-                
+
         if display:
             _display_stats(f"Direct Projection: {ref} x {comp}", row)
 
     dirproj_df = pd.DataFrame(rows)
-    
+
     if plot:
+        from ..visualization.rhomplots import plot_dirproj
         setupanalysis(path, file_prefix, includetime=False)
         plt.close('all')
-        n = len(dirproj_mtx)
-        # Show each group pair once: mask the diagonal and the upper triangle.
-        mask = np.triu(np.ones((n, n), dtype=bool))
-        lower = ~mask
-        cell = max(0.5, min(1.0, 10.0 / n))   # inches per cell; caps the figure as n grows
-        fs = max(6, cell * 13)                # annotation + label font tracks cell size
 
-        for mtx, name, label in [(dirproj_mtx, 'rhm', 'Mean Homologue Similarity'), (dirproj_phi, 'phi', 'Mean Factor Congruence')]:
-            shown = mtx.values[lower]
-            annot = np.vectorize(lambda v: f"{v:.2f}".lstrip("0"))(mtx.values)
-            fig, ax = plt.subplots(figsize=(n * cell + 2, n * cell + 2))
-            sns.heatmap(
-                mtx,
-                mask=mask,
-                vmin=shown.min(),
-                vmax=shown.max(),
-                annot=annot,
-                fmt="",
-                annot_kws={"fontsize": fs},
-                cmap="flare",
-                square=True,
-                linewidths=0.5,
-                cbar_kws={"shrink": 0.6, "label": label},
-                ax=ax,
-            )
-            ax.set_title(label, fontsize=16, pad=12)
-            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=fs)
-            ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=fs)
-            fig.tight_layout()
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for name in metrics:
+            fig = plot_dirproj(dirproj_df, metric=name)
             fig.savefig(
                 os.path.join(path, f"{file_prefix}/{file_prefix}_heatmap{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
                 bbox_inches="tight",
@@ -339,14 +305,14 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
             )
             plt.show()
             plt.close(fig)
-            
+
     if save:
         _export_report(dirproj_df, path, file_prefix, f"dj{len(df_scaled.columns)}D_{npc}PC")
         
     return dirproj_df
 
 def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", boot=1000,
-                save=True, display=False, shuffle=False, cluster=None, path='results', file_prefix=randint(10000, 99999)):
+                save=True, display=False, plot=True, shuffle=False, cluster=None, subspace=False, path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus-Sample Reproducibility
     ------------------------------
@@ -375,6 +341,10 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
             never appears on both sides of a comparison. Prevents leakage and
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -422,31 +392,36 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     
     # Initialize engine for omnibus resampling profile
     boot_engine = BootstrapEngine(
-        estimator=boot_model, 
-        cv=cv, 
-        omnibus=True, 
-        pro_cong=True, 
-        shuffle=shuffle
+        estimator=boot_model,
+        cv=cv,
+        omnibus=True,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace
     )
-    
+
     rows = []
-    total_rhm, total_phi = [], []
-    
+    total_rhm, total_phi, total_sub = [], [], []
+
     for sample in samples:
         print(f"Running Omnibus x {sample}")
         results = boot_engine(X=df, y=sample, group=group)
-        
+
         total_rhm.extend(results[0])
         total_phi.extend(results[1])
-        
-        row = _build_row(boot_model.n_comp, results[0], results[1], metadata={group: sample})
+        if subspace:
+            total_sub.extend(results[2])
+
+        row = _build_row(boot_model.n_comp, results[0], results[1],
+                         sub_data=results[2] if subspace else None, metadata={group: sample})
         rows.append(row)
-        
+
         if display:
             _display_stats(f'Omnibus x {sample}', row)
 
     # Append Global Summary Row
-    total_row = _build_row(boot_model.n_comp, total_rhm, total_phi, metadata={group: "Total"})
+    total_row = _build_row(boot_model.n_comp, total_rhm, total_phi,
+                           sub_data=total_sub if subspace else None, metadata={group: "Total"})
     rows.append(total_row)
     
     if display:
@@ -454,13 +429,25 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
 
     omsamp_df = pd.DataFrame(rows)
 
+    if plot:
+        from ..visualization.rhomplots import plot_omni
+        setupanalysis(path, file_prefix, includetime=False)
+
+        plt.close('all')
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for metric in metrics:
+            fig = plot_omni(omsamp_df, metric=metric, title=f"Omnibus-Sample Reproducibility: {metric.upper()}", n_vars=len(df_t.columns))
+            fig.savefig(os.path.join(path, f"{file_prefix}/{file_prefix}_omsamp_{len(df_t.columns)}D_{npc}PC_{metric}.png"), bbox_inches="tight", dpi=150)
+            plt.show()
+            plt.close(fig)
+
     if save:
         _export_report(omsamp_df, path, file_prefix, f"omsamp_{len(df_t.columns)}D_{npc}PC")
         
     return omsamp_df
 
 def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-         save=True, plot=True, display=False, shuffle=False, cluster=None, path='results', file_prefix=randint(10000, 99999)):
+         save=True, plot=True, display=False, shuffle=False, cluster=None, subspace=False, path='results', file_prefix=randint(10000, 99999)):
     
     """    
     Omnibus-Sample Reproducibility: By-Component
@@ -491,6 +478,10 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
             never appears on both sides of a comparison. Prevents leakage and
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -546,22 +537,27 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
     
     # Initialize engine tailored for granular by-component splits
     boot_engine = BootstrapEngine(
-        estimator=boot_model, 
-        cv=cv, 
-        bypc=True, 
-        pro_cong=True, 
-        shuffle=shuffle
+        estimator=boot_model,
+        cv=cv,
+        bypc=True,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace
     )
-    
+
     rows = []
     for sample in samples:
         print(f"Running Component Breakdown: omnibus x {sample}")
-        # Returns shape: [complist, philist] -> [n_components, n_folds_combinations]
+        # Returns [complist, philist(, sublist)] -> [n_components, n_fold_combinations].
+        # sublist (if present) is sample-level subspace similarity per fold combination, not
+        # per-component, so it is reused across this sample's component rows.
         comps = boot_engine(X=maindict['omnibus'], y=maindict[sample], group=group)
-        
+        sub = comps[2] if subspace else None
+
         for idx in range(npc):
             meta = {group: sample, 'comp': idx + 1}
-            row = _build_row(boot_model.n_comp, comps[0][idx], comps[1][idx], metadata=meta)
+            row = _build_row(boot_model.n_comp, comps[0][idx], comps[1][idx],
+                             sub_data=sub, metadata=meta)
             rows.append(row)
             
             if display:
@@ -570,11 +566,33 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
     stats_bypc = pd.DataFrame(rows)
     
     if plot:
-        model = basePCA(n_components=npc, rotation=rotation)
-        model.fit_transform(maindict['omnibus'])
-        model.save(path=os.path.join(path, f"{file_prefix}"), pathprefix=f"{file_prefix}_os")
-        
+        # Fit basePCA on the exact omnibus half drawn in this call, so the wordclouds
+        # match the loadings that underlie the per-component similarity scores above.
+        om_model = basePCA(n_components=npc, rotation=rotation, method=method)
+        om_model.fit(maindict['omnibus'])
+
+        cloud_dir = setupanalysis(os.path.join(path, file_prefix), "bypc_wordclouds", includetime=False)
+        save_wordclouds(om_model.loadings, path=str(cloud_dir))
+
+        # Persist the loadings alongside the stats CSV and attach them to the returned
+        # frame so plot_bypc can render the wordclouds without a save/reload round-trip.
+        loadings_path = os.path.join(
+            path, f"{file_prefix}",
+            f"{file_prefix}_loadings_{len(df_t.columns)}D_{npc}PC.csv",
+        )
+        om_model.loadings.to_csv(loadings_path)
+        stats_bypc.attrs["loadings"] = om_model.loadings.copy()
+
+        from ..visualization.rhomplots import plot_bypc
+        plt.close('all')
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for metric in metrics:
+            fig = plot_bypc(stats_bypc, metric=metric)
+            fig.savefig(os.path.join(path, f"{file_prefix}/{file_prefix}_bypc_{len(df_t.columns)}D_{npc}PC_{metric}.png"), bbox_inches="tight", dpi=150)
+            plt.show()
+            plt.close(fig)
+
     if save:
         _export_report(stats_bypc, path, file_prefix, f"bypc_{len(df_t.columns)}D_{npc}PC")
-        
+
     return stats_bypc

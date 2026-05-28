@@ -135,14 +135,12 @@ class basePCA(TransformerMixin, BaseEstimator):
         self.project_columns = metadata_df
         self._raw_project = numeric_df
 
-        # Apply the fitted scaler
+        # Apply the fitted scaler from fit() so new data is standardized against training stats
         if scale:
-            self.scaler = StandardScaler()
-
             numeric_df = pd.DataFrame(
-                self.scaler.transform(numeric_df), 
-                index=new_index, 
-                columns=self.items
+                self.scaler.transform(numeric_df),
+                index=new_index,
+                columns=self.items,
             )
 
         # Project data onto components (Matrix Multiplication)
