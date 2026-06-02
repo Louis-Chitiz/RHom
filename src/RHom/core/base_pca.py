@@ -46,19 +46,28 @@ class basePCA(TransformerMixin, BaseEstimator):
             Save the results of the PCA analysis.
 
     """
-    def __init__(self, n_components="infer",verbosity=0,rotation="varimax", method='svd'):
+    def __init__(self, n_components="infer", verbosity=0, rotation="varimax",
+                 method='svd', corr='pearson'):
         self.n_components = n_components
         self.verbosity = verbosity
         self.rotation = rotation
         self.method = method
+        self.corr = corr
         self.path = None
         self.ogdf = None
 
     def naive_pca(self, df):
         if self.method == "svd":
+            if self.corr != "pearson":
+                raise ValueError(
+                    f"SVD path only supports corr='pearson'; got corr={self.corr!r}. "
+                    "Use method='eigen' for 'spearman' or 'polychoric'."
+                )
             self.fullpca, loadings, self.eigenvalues = run_svd(df, self.n_components, self.verbosity)
+            
         elif self.method == "eigen":
-            self.eigenvalues, loadings = run_eigen(df, self.n_components, self.verbosity)
+            self.eigenvalues, loadings = run_eigen(df, self.n_components, self.verbosity,
+                                                   corr=self.corr)
         
         if self.rotation:
             loadings = rotation(loadings, self.rotation)

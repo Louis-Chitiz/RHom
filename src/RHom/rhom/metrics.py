@@ -64,13 +64,15 @@ class rhom(BaseEstimator):
     Everett, J. E. (1983). Factor Comparability As A Means Of Determining The Number Of Factors And Their Rotation. \n\tMultivariate Behavioral Research, 18(2), 197-218. https://doi.org/10.1207/s15327906mbr1802_5
 
     """
-    def __init__(self, rd=None, n_comp=None, method='svd', rotation="varimax", bypc=False):
+    def __init__(self, rd=None, n_comp=None, method='svd', rotation="varimax",
+                 bypc=False, corr='pearson'):
             self.rd = rd
             self.n_comp = n_comp
             self.method = method
             self.rotation = rotation
             self.bypc = bypc
-            
+            self.corr = corr
+
             # Sub-models instantiated during fit
             self.model_x = None
             self.model_x2 = None
@@ -95,10 +97,12 @@ class rhom(BaseEstimator):
 
         use_rot = self.rotation if (self.n_comp and self.n_comp >= 2) else False
 
-        self.model_x = basePCA(n_components=self.n_comp, verbosity=0, rotation=use_rot, method=self.method)
+        self.model_x = basePCA(n_components=self.n_comp, verbosity=0, rotation=use_rot,
+                               method=self.method, corr=self.corr)
         self.model_x.fit(pd.DataFrame(X))
 
-        self.model_x2 = basePCA(n_components=self.n_comp, verbosity=0, rotation=False, method=self.method)
+        self.model_x2 = basePCA(n_components=self.n_comp, verbosity=0, rotation=False,
+                                method=self.method, corr=self.corr)
         self.model_x2.fit(pd.DataFrame(y if y is not None else X))
     
         return self

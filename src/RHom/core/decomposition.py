@@ -25,13 +25,44 @@ def run_svd(df: pd.DataFrame, n_components: Union[int, str] = "infer", verbosity
     
     return model, loadings, eigenvalues
 
-def run_eigen(df: pd.DataFrame, n_components: Union[str, int] = "infer", verbosity: int = 0):
+def run_eigen(df: pd.DataFrame, n_components: Union[str, int] = "infer", verbosity: int = 0,
+              corr: str = "pearson"):
     """
-    Runs PCA via Eigendecomposition of the correlation matrix.
-    """
+    Runs PCA via eigendecomposition of a correlation matrix.
 
-    # Compute the correlation matrix
-    R = np.corrcoef(df, rowvar=False)
+    Parameters
+    ----------
+        df: pd.DataFrame or array-like
+            The numeric data to decompose.
+        n_components: int or "infer", default="infer"
+            Number of components to retain. With "infer", uses the Kaiser >=1 rule.
+        verbosity: int, default=0
+        corr: str, default="pearson"
+            Which correlation matrix to decompose:
+              - "pearson" (default) -- numpy's product-moment correlation
+              - "spearman" -- rank correlation; monotonic-invariant, ordinal-friendly
+              - "polychoric" -- latent-continuous correlation behind ordinal items via
+                Olsson (1979) MLE. Only meaningful for genuinely ordinal data; much
+                slower (one optimisation per pair).
+    """
+    if not isinstance(corr, str):
+        raise TypeError(
+            f"corr must be a string ('pearson', 'spearman', or 'polychoric'); "
+            f"got {type(corr).__name__}."
+        )
+    corr = corr.lower()
+    if corr == "pearson":
+        R = np.corrcoef(df, rowvar=False)
+    elif corr == "spearman":
+        R = pd.DataFrame(df).corr(method="spearman").values
+    elif corr == "polychoric":
+        from ..preprocessing.correlations import polychoric_corr_matrix
+        R = polychoric_corr_matrix(df)
+        R = R.values if hasattr(R, "values") else R
+    else:
+        raise ValueError(
+            f"Unknown corr={corr!r}; pick one of 'pearson', 'spearman', 'polychoric'."
+        )
 
     # Perform eigen decomposition (eigh returns values in ascending order)
     evals, evecs = eigh(R)

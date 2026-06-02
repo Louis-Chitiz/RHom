@@ -67,7 +67,7 @@ def _export_report(df, path, prefix, suffix):
     df.to_csv(full_path, index=False)
     print(f"Dataframe saved to: {full_path}")
 
-def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
+def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
               boot=1000, save=True, display=False, shuffle=False, cluster=None, subspace=False,
               path='results', file_prefix=randint(10000, 99999)):
     """
@@ -99,6 +99,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -141,7 +148,8 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
     samples = df[group].unique() if group else ['fulldata']
     _check_rank(df_t)
 
-    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc, method=method, rotation=rotation)
+    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
     cv = pair_cv(group=group, cluster=cluster, n=boot)
     
     boot_engine = BootstrapEngine(
@@ -173,9 +181,9 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax',
         
     return split_df
 
-def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-             save=True, plot=True, display=False, shuffle=False, cluster=None, subspace=False,
-             path='results', file_prefix=randint(10000, 99999)):
+def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+             folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
+             subspace=False, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
     ---------------------------------
@@ -205,6 +213,13 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -260,7 +275,8 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
     df_scaled = pd.DataFrame(scaler.fit_transform(df[feat_cols]), columns=feat_cols)
     _check_rank(df_scaled)
 
-    boot_model = rhom(rd=copy.deepcopy(df_scaled.values), n_comp=npc, method=method, rotation=rotation)
+    boot_model = rhom(rd=copy.deepcopy(df_scaled.values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
     cv = pair_cv(boot=True, k=folds, cluster=cluster)
     
     boot_engine = BootstrapEngine(
@@ -311,8 +327,9 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", fo
         
     return dirproj_df
 
-def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", boot=1000,
-                save=True, display=False, plot=True, shuffle=False, cluster=None, subspace=False, path='results', file_prefix=randint(10000, 99999)):
+def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+                boot=1000, save=True, display=False, plot=True, shuffle=False, cluster=None,
+                subspace=False, path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus-Sample Reproducibility
     ------------------------------
@@ -345,6 +362,13 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -387,7 +411,8 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     df_t = df.drop(labels=drop_cols, axis=1)
     _check_rank(df_t)
 
-    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc, method=method, rotation=rotation)
+    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
     cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot)
     
     # Initialize engine for omnibus resampling profile
@@ -446,8 +471,9 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
         
     return omsamp_df
 
-def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=5,
-         save=True, plot=True, display=False, shuffle=False, cluster=None, subspace=False, path='results', file_prefix=randint(10000, 99999)):
+def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+         folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
+         subspace=False, path='results', file_prefix=randint(10000, 99999)):
     
     """    
     Omnibus-Sample Reproducibility: By-Component
@@ -482,6 +508,13 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -528,7 +561,8 @@ def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", folds=
     drop_cols = [c for c in (group, cluster) if c is not None]
     df_t = df.drop(labels=drop_cols, axis=1)
     _check_rank(df_t)
-    boot_model = rhom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc, method=method, rotation=rotation)
+    boot_model = rhom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
     cv = pair_cv(boot=True, group=group, cluster=cluster, k=folds)
     
     nval = (df[group].value_counts().min()) / 2
