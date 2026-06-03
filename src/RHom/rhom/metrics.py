@@ -15,54 +15,50 @@ class rhom(BaseEstimator):
 
     Parameters
     ----------
-        - rd: array-like or pd.DataFrame, default=None
-            - The referent dataset for deriving components.
-        - n_comp: int, default=None
-            - The number of components to extract from the dataset.
-        - method: str, default="svd"
-            - Method for PCA implementation.
-            - Can take:
+        rd: array-like or pd.DataFrame, default=None
+            The referent dataset for deriving components.
+        n_comp: int, default=None
+            The number of components to extract from the dataset.
+        method: str, default="svd"
+            Method for PCA implementation.
+            Can take:
             1. 'svd' (sklearn PCA(svd_solver = "full"), numpy, scipy, MATLAB, R (prcomp), Stata)
             2. 'eigen'(SPSS, R (psych, princomp), SAS, sklearn PCA(svd_solver="auto"))
-        - rotation: str, default="Varimax"
-            - The rotation method to use for the loadings. If None or False, no rotation is performed.
-            - Supported methods are "varimax", "promax", "oblimin", "oblimax", "quartimin", "quartimax", and "equamax".
-        - bypc: bool, default=False
-            - Whether to save component similarity on a by-component basis.
-        - corr: str, default="pearson"
-            - The correlation method to use for calculating component similarity.
-            - Supported methods are "pearson", "spearman", and "polychoric".
-        - anchor: array-like, optional,default=None
-            - (p, n_comp) loadings matrix defining a canonical PC1..PCk frame.
-            - When set, predict / pro_cong align *both* sub-model loadings to this anchor (instead of aligning model_x2 to model_x),
-              and hom_pairs returns the diagonal of the resulting similarity matrix in column-index order rather than the Hungarian permutation.
-              This makes "PC k" carry a consistent meaning across every fit, which is what bypc-style breakdowns require.
+        rotation: str, default="Varimax"
+            The rotation method to use for the loadings. If None or False, no rotation is performed.
+            Supported methods are "varimax", "promax", "oblimin", "oblimax", "quartimin", "quartimax", and "equamax".
+        bypc: bool, default=False
+            Whether to save component similarity on a by-component basis.
+        corr: str, default="pearson"
+            The correlation method to use for calculating component similarity.
+            Supported methods are "pearson", "spearman", and "polychoric".
+        anchor: array-like, optional,default=None
+            (p, n_comp) loadings matrix defining a canonical PC1..PCk frame.
+            When set, predict / pro_cong align *both* sub-model loadings to this anchor (instead of aligning model_x2 to model_x),
+            and hom_pairs returns the diagonal of the resulting similarity matrix in column-index order rather than the Hungarian permutation.
+            This makes "PC k" carry a consistent meaning across every fit, which is what bypc-style breakdowns require.
 
     Attributes
     ----------
-        - model_x: PCA
-            - The PCA object for the referent dataset.
-        - model_x2: PCA
-            - The PCA object for the comparate dataset.
-        - results: pd.DataFrame
-            - The projected component scores for each set of components.
+        model_x: PCA
+            The PCA object for the referent dataset.
+        model_x2: PCA
+            The PCA object for the comparate dataset.
+        results: pd.DataFrame
+            The projected component scores for each set of components.
 
     Methods
     -------
-        - get_params(deep=True):
-            - Retrieve the parameters of the instance.
-
-        - fit(x, y=None):
-            - Fit the model to the provided referent and comparate data.
-
-        - predict(y=None):
-            - Predict the output based on the provided input data.
-
-        - hom_pairs(cor_matrix):
-            - Calculate the correlation of homologous pairs in the correlation matrix of two datasets \n\t\t(Mulholland et al., 2023; Everett, 1983).
-
-        - pro_cong():
-            - Perform procrustes congruence analysis.
+        get_params(deep=True):
+            Retrieve the parameters of the instance.
+        fit(x, y=None):
+            Fit the model to the provided referent and comparate data.
+        predict(y=None):
+            Predict the output based on the provided input data.
+        hom_pairs(cor_matrix):
+            Calculate the correlation of homologous pairs in the correlation matrix of two datasets \n\t\t(Mulholland et al., 2023; Everett, 1983).
+        pro_cong():
+            Perform procrustes congruence analysis.
    
     References
     ----------
@@ -255,21 +251,4 @@ class rhom(BaseEstimator):
         if self.bypc:
             return list(cosines)
         return float(np.mean(cosines))
-
-    def old_cv(self,data,cv=None):
-        if not cv:
-            cv = KFold()
-        else:
-            assert isinstance(cv,BaseCrossValidator)
-        baseline = self.fit_transform(data)
-        folds = []
-        correlations = []
-        for x,y in cv.split(data):
-            self.fit(data.iloc[x])
-            out = self.transform(data.iloc[y])
-            folds.append(out)
-            outv = self.check_inputs(out).values.ravel()
-            bv = self.check_inputs(baseline.iloc[y]).values.ravel()
-            correlations.append(pearsonr(outv,bv)[0])
-        return correlations, folds
 

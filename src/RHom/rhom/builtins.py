@@ -682,6 +682,173 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
     return dirproj_bypc_df
 
 
+def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax',
+                  corr='pearson', cluster=None, save=True, plot=True, display=False,
+                  path='results', file_prefix=randint(10000, 99999)):
+    """
+    Omnibus Variance Attribution
+    ----------------------------
+    Fits one omnibus PCA on the pooled data and reports, for each group, the share
+    of the group's standardised variance captured by each omnibus component. This
+    answers "given these pooled-data components, how do they partition variance
+    within each group?" -- a descriptive complement to the reproducibility builtins,
+    which instead ask "do these components agree across groups?".
+
+    The npc bars stacked together (Σₖ varₘ(k)) give the total variance captured by
+    the omnibus solution in group g. See the Notes section for the formal definition
+    and the random-subspace chance baseline.
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            It should include only the columns to be decomposed and your grouping variable.
+
+        group: str, default=None
+            The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column. Stripped before decomposition so a
+            cluster ID does not contaminate the PCA, but has no effect on the variance
+            attribution itself (which is deterministic and does not resample).
+
+        corr: str, default="pearson"
+            Correlation matrix used for the omnibus fit under ``method='eigen'``:
+            "pearson", "spearman", or "polychoric". Ignored under ``method='svd'``.
+
+        npc: int, default=None
+            Number of components to extract for the omnibus PCA.
+
+        rotation: str, default="varimax"
+            Rotation applied to the omnibus loadings. "none" for no rotation.
+
+        save: bool, default=True
+            Save the (group, comp, var_pct) table to .csv.
+
+        plot: bool, default=True
+            Render the stacked-bar variance attribution figure.
+
+        display: bool, default=False
+            Print each group's per-component variance share in the terminal.
+
+        path: str, default='results'
+            The path to the output directory.
+
+        file_prefix: str, default=randint(10000,99999)
+            Provide name to distinguish saved files.
+
+    Returns
+    -------
+        pd.DataFrame:
+            One row per (group, comp) with columns ``n_comp``, ``group`` (named after
+            your grouping variable), ``comp``, ``var_pct``.
+
+        .csv:
+            If save=True.
+
+        .png:
+            If plot=True, a stacked-bar figure with one bar per group and npc
+            segments stacked by component contribution.
+
+    Notes
+    -----
+    Let
+
+        L        ∈ ℝ^{p × npc}     omnibus loadings (basePCA output)
+        ℓₖ       = L[:, k] / ‖L[:, k]‖           unit-normalised k-th column
+        X̃_g     ∈ ℝ^{n_g × p}     group g's data after column-wise standardisation
+        R_g     = X̃_gᵀ X̃_g / n_g             within-group correlation matrix
+        p                                       number of decomposed features
+
+    Then component k's variance share in group g is
+
+                    ℓₖᵀ · R_g · ℓₖ
+        varᵍ(k) = ───────────────── × 100 %
+                          p
+
+    which equals, equivalently, the projected-score formulation
+
+                    ‖X̃_g · ℓₖ‖²
+        varᵍ(k) = ──────────────── × 100 %
+                       n_g · p
+
+    used inside the implementation. Summing over k gives the total variance that
+    the omnibus solution captures in group g (≤ 100 %; equal to 100 % only when
+    npc = p).
+
+    A random npc-dimensional subspace on standardised isotropic data captures, in
+    expectation, npc / p × 100 % of the within-group variance, which the
+    ``plot_omni_variance`` figure marks with a dashed horizontal line. Because
+    variance is a *quadratic* projection, this baseline is the *square* of the
+    canonical-correlation baseline √(npc/p) used for the reproducibility metrics
+    (rhm, phi, sub).
+
+    .. math::
+
+        \\mathrm{var}_g(k) = \\frac{\\ell_k^\\top R_g \\,\\ell_k}{p} \\times 100\\%,
+        \\qquad
+        \\text{chance} \\approx \\frac{\\mathrm{npc}}{p} \\times 100\\%.
+    """
+
+    drop_cols = [c for c in (group, cluster) if c is not None]
+    feat_cols = df.columns.drop(drop_cols)
+    _check_rank(df[feat_cols])
+
+    # Omnibus PCA on pooled data defines the reference component set.
+    omni = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
+    omni.fit(df[feat_cols])
+    L = omni.loadings.values
+
+    # basePCA stores loadings as eigvec * sqrt(eigval); for variance attribution we
+    # want unit-norm directions, so divide each column by its norm.
+    norms = np.linalg.norm(L, axis=0)
+    L_unit = L / norms
+
+    p = len(feat_cols)
+    samples = df[group].unique()
+
+    rows = []
+    for g in samples:
+        X_g = df.loc[df[group] == g, feat_cols]
+        X_g_std = StandardScaler().fit_transform(X_g)
+        scores = X_g_std @ L_unit                                # (n_g, npc)
+        var_per_comp = (scores ** 2).sum(axis=0) / len(X_g_std)  # variance of each PC's scores
+        var_pct = var_per_comp / p * 100                         # share of group's total variance
+
+        for k in range(npc):
+            rows.append({
+                "n_comp": f"{npc}PC",
+                group: g,
+                "comp": k + 1,
+                "var_pct": float(var_pct[k]),
+            })
+
+        if display:
+            shares = ", ".join(f"PC{k+1}={var_pct[k]:.1f}%" for k in range(npc))
+            total = float(var_pct.sum())
+            print(f"{g}: total={total:.1f}% | {shares}")
+
+    omni_var_df = pd.DataFrame(rows)
+
+    if plot:
+        from ..visualization.rhomplots import plot_omni_variance
+        setupanalysis(path, file_prefix, includetime=False)
+        plt.close('all')
+
+        fig = plot_omni_variance(omni_var_df, group=group, n_vars=p)
+        fig.savefig(
+            os.path.join(path, f"{file_prefix}/{file_prefix}_omni_var_{p}D_{npc}PC.png"),
+            bbox_inches="tight", dpi=150,
+        )
+        plt.show()
+        plt.close(fig)
+
+    if save:
+        _export_report(omni_var_df, path, file_prefix, f"omni_var_{p}D_{npc}PC")
+
+    return omni_var_df
+
+
 def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
          folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
          subspace=False, path='results', file_prefix=randint(10000, 99999)):

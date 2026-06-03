@@ -279,6 +279,90 @@ def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = N
     return fig
 
 
+def plot_omni_variance(results: pd.DataFrame, group: str = None,
+                       n_vars: int = None, title: str = None):
+    """
+    Stacked bar plot of omnibus variance attribution by group.
+
+    One bar per group; each bar is stacked into npc segments, one per omnibus
+    component, with segment heights equal to that component's variance share within
+    the group. Stack total = total variance captured by the omnibus solution in
+    that group. A dashed horizontal line marks ``npc / n_vars * 100`` -- the share
+    a random k-subspace would capture on standardised isotropic data -- to indicate
+    when the omnibus components are doing better than chance.
+
+    Parameters
+    ----------
+        results : pd.DataFrame
+            Output of ``omni_variance`` (one row per (group, comp) with ``var_pct``).
+        group : str, optional
+            Name of the grouping column. Inferred from the layout if not supplied.
+        n_vars : int, optional
+            Number of decomposition features (p). When provided, the random
+            k-subspace chance line is drawn at ``npc / p * 100``%.
+        title : str, optional
+            Figure-level title.
+
+    Returns
+    -------
+        matplotlib.figure.Figure
+    """
+    if group is None:
+        reserved = {"n_comp", "comp", "var_pct"}
+        group = next(c for c in results.columns if c not in reserved)
+
+    # Pivot to (group × comp) wide form, preserving the input ordering of groups
+    group_order = results[group].drop_duplicates().tolist()
+    wide = results.pivot(index=group, columns="comp", values="var_pct").reindex(group_order)
+    pcs = sorted(wide.columns)
+    npc = len(pcs)
+    ng = len(group_order)
+
+    fig, ax = plt.subplots(figsize=(max(6.0, ng * 0.9 + 2.0), 5.0))
+    colors = sns.color_palette("flare", n_colors=npc)
+
+    bottom = np.zeros(ng)
+    for i, pc in enumerate(pcs):
+        heights = wide[pc].values
+        ax.bar(group_order, heights, bottom=bottom,
+               color=colors[i], edgecolor="white", linewidth=0.5,
+               label=f"PC{pc}")
+
+        # Per-segment value label, centred inside the segment (skip if too thin)
+        for x_i, (h, b) in enumerate(zip(heights, bottom)):
+            if h >= 2.0:
+                ax.text(x_i, b + h / 2, f"{h:.1f}%",
+                        ha="center", va="center",
+                        color="white", fontsize=9, fontweight="bold")
+        bottom += heights
+
+    # Random k-subspace chance line at npc/p (variance is quadratic in cosine,
+    # so the variance baseline is npc/p, not sqrt(npc/p) as for the similarity metrics).
+    if n_vars:
+        chance = npc / n_vars * 100
+        ax.axhline(chance, linestyle="--", color="0.3", linewidth=1.2, zorder=3)
+        ax.text(ng - 0.5, chance + 0.6,
+                f"random {npc}-subspace ≈ {chance:.1f}%",
+                ha="right", va="bottom", color="0.3", fontsize=9)
+
+    # Total-on-top label so the overall reconstructive share is legible
+    totals = bottom
+    for x_i, total in enumerate(totals):
+        ax.text(x_i, total + 0.6, f"{total:.1f}%",
+                ha="center", va="bottom", fontsize=10, fontweight="bold", color="0.15")
+
+    ax.set_ylabel("% of within-group variance")
+    ax.set_ylim(0, max(100.0, float(totals.max()) * 1.1))
+    ax.set_xticks(np.arange(ng))
+    ax.set_xticklabels(group_order, rotation=30, ha="right")
+    ax.legend(title="Component", bbox_to_anchor=(1.02, 1), loc="upper left",
+              frameon=False)
+    ax.set_title(title if title is not None else "Omnibus Variance Attribution by Group",
+                 fontsize=13, pad=10)
+    fig.tight_layout()
+    return fig
+
+
 def plot_aligned_wordclouds(group_loadings: dict, anchor_loadings=None,
                             font: str = "helvetica", show_var: bool = True,
                             n_features: int = None, title: str = None):

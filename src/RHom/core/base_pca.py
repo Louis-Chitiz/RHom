@@ -9,28 +9,64 @@ from ..io.save import run_save_sequence
 
 class basePCA(TransformerMixin, BaseEstimator):
     """
-    A base class for performing Principal Component Analysis (PCA) with RHom.
+    A base class for performing Principal Component Analysis (PCA).
 
-    Args:
-        verbosity (int, optional): The level of verbosity. Set to 0 for no output, 1 for basic output, and 2 for detailed output. Defaults to 1.
-        n_components (int or "infer", optional): The number of components to keep. If "infer", the number of components is determined based on the explained variance. Defaults to "infer".
-        method (str, optional): The method to use for decomposition. Supported methods are "svd" (used in sklearn and R's prcomp()) and "eigen" (used in SPSS and R's princomp() and pca() from the psych library).
-        rotation (str or bool, optional): The rotation method to use for the loadings. If False, no rotation is performed. Supported methods are "varimax", "promax", "oblimin", "oblimax", "quartimin", "quartimax", and "equamax". Defaults to "varimax".
-        
+    Parameters:
+    -----------
+        verbosity: int, optional, default=0
+            The level of verbosity. Set to 0 for no output, 1 for basic output, and 2 for detailed output. Defaults to 1.
+        n_components: int or "infer", optional, default="infer"
+            The number of components to keep. If "infer", the number of components is determined based on the explained variance. 
+        method: str, optional, default='svd' 
+            The method to use for decomposition. Supported methods are:
+                - "svd" (used in sklearn and R's prcomp()) 
+                - "eigen" (used in SPSS and R's princomp() and pca() from the psych library).
+        corr: str, optional, default="pearson": 
+            The type of correlation to use for the eigen decomposition method. Supported values are:
+                - "pearson" (default) -- numpy's product-moment correlation
+                - "spearman" -- rank correlation; monotonic-invariant, ordinal-friendly
+                - "polychoric" -- latent-continuous correlation behind ordinal items via
+                    Olsson (1979) MLE. Only meaningful for genuinely ordinal data; much
+                    slower (one optimisation per pair).
+        rotation: str or bool, optional, default="varimax": 
+            The rotation method to use for the loadings. If False, no rotation is performed. 
+            Supported methods are:
+                - "varimax" (default)
+                - "promax"
+                - "oblimin"
+                - "oblimax"
+                - "quartimin"
+                - "quartimax"
+                - "equamax"
+
     Attributes:
-        n_components (int or "infer"): The number of components to keep.
-        verbosity (int): The level of verbosity.
-        rotation (str or bool): The rotation method to use for the loadings.
-        path (str or None): The path to save the results.
-        ogdf (pd.DataFrame or None): The original dataframe.
-        scaler (StandardScaler): The scaler used for z-score normalization.
-        loadings (pd.DataFrame): The loadings matrix.
-        extra_columns (pd.DataFrame): The fitted PCA scores.
-        project_columns (pd.DataFrame): The projected PCA scores.
-        _raw_fitted (pd.DataFrame): The raw fitted data.
-        _raw_project (pd.DataFrame): The raw projected data.
-        fullpca (PCA): The PCA object with full components.
-        items (list): The column names of the input dataframe.
+    -----------
+        n_components: int or "infer"
+            The number of components to keep.
+        verbosity: int
+            The level of verbosity.
+        rotation: str or bool
+            The rotation method to use for the loadings.
+        path: str or None
+            The path to save the results.
+        ogdf: pd.DataFrame or None
+            The original dataframe.
+        scaler: StandardScaler
+            The scaler used for z-score normalization.
+        loadings: pd.DataFrame
+            The loadings matrix.
+        extra_columns: pd.DataFrame
+            The fitted PCA scores.
+        project_columns: pd.DataFrame
+            The projected PCA scores.
+        _raw_fitted: pd.DataFrame
+            The raw fitted data.
+        _raw_project: pd.DataFrame
+            The raw projected data.
+        fullpca: PCA
+            The PCA object with full components.
+        items: list
+            The column names of the input dataframe.
 
     Methods:
         naive_pca(df: pd.DataFrame) -> Tuple[PCA, pd.DataFrame]:
@@ -44,7 +80,6 @@ class basePCA(TransformerMixin, BaseEstimator):
 
         save(group=None, path=None, pathprefix="analysis", includetime=True) -> None:
             Save the results of the PCA analysis.
-
     """
     def __init__(self, n_components="infer", verbosity=0, rotation="varimax",
                  method='svd', corr='pearson'):
