@@ -66,42 +66,6 @@ def rotated_variance(pca):
 
     return data
 
-def tcc(fac1=None, fac2=None):
-    """
-    Tucker's Congruence Coefficient
-    -------------------------------
-    Calculate the Tucker's Congruence Coefficient (TCC) between two components, which is an estimate of their loading similarity.
-
-    Parameters
-    ----------
-        fac1 : array-like
-            The first component.
-        fac2 : array-like
-            The second component.
-
-    Returns
-    -------
-        tcc : float
-            The Tucker's Congruence Coefficient (TCC) between the two factors.
-
-    Notes
-    -----
-        - The TCC is a measure of loading similarity between two given components (Tucker, 1951).
-        - Lovik et al. (2020) suggest using the absolute value of the numerator for factor matching.
-
-    References
-    ----------
-        Tucker, L. R. (1951). A method for synthesis of factor analysis studies (PRS-984). Washington, DC: Department of the Army. 
-
-        Lovik, A., Nassiri, V., Verbeke, G., & Molenberghs, G. (2020). A modified tucker’s congruence coefficient for factor matching.
-            Methodology: European Journal of Research Methods for the Behavioral and Social Sciences,
-            16(1), 59-74. https://doi.org/10.5964/meth.2813 
-
-    """
-    numerator = np.abs(np.dot(fac1, fac2))
-    denominator = np.linalg.norm(fac1) * np.linalg.norm(fac2)
-    return numerator / denominator
-
 def fullmantel(df):
     """
     Full-Mantel Shuffle (Row and Column Permutation)

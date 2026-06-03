@@ -471,7 +471,218 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
         
     return omsamp_df
 
-def bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+                  folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
+                  subspace=False, path='results', file_prefix=randint(10000, 99999)):
+    """
+    Direct-Projection Reproducibility: By-Component
+    -----------------------------------------------
+    Pairwise direct-projection reproducibility broken down per component. A pooled-data
+    PCA on the full dataset defines a canonical PC1..PC{npc} frame; every per-fold PCA
+    in each pair is Procrustes-aligned to that anchor before scoring, so column index k
+    refers to the same homologue across all (referent, comparator, replicate) triples.
+    This is the bootstrapped analogue of the one-shot bypc heatmaps in the example
+    script, and the dir_proj counterpart of `bypc` (which anchors against an omnibus
+    half-sample rather than a pooled fit).
+
+    Reports component similarity with:
+        1) Loading similarity (Tucker's Congruence Coefficient: Tucker, 1951; See also Lovik et al., 2020)
+        2) Component-score similarity (R-homologue: Mulholland et al., 2023; See also Everett, 1983)
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            It should include only the columns to be decomposed and your grouping variable.
+
+        group: str, default=None
+            The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces. Subspace similarity is a whole-solution property, so the
+            per-pair value is broadcast across the npc rows for that pair.
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
+
+        npc: int, default=None
+            Number of components to extract per solution.
+
+        rotation: str, default="varimax"
+            Rotation method applied to the anchor PCA. "none" for no rotation.
+
+        folds: int, default=5
+            Number of folds to use for cross-validation within each pair.
+
+        save: bool, default=True
+            Save outputted reproducibility results to .csv.
+
+        plot: bool, default=True
+            Visualise results as a grid of per-component pairwise heatmaps.
+
+        display: bool, default=False
+            Print output in the terminal.
+
+        shuffle: bool, default=False
+            Perform analysis on shuffled "garbage" data.
+
+        path: str, default='results'
+            The path to the output directory.
+
+        file_prefix: str, default=randint(10000,99999)
+            Provide name to distinguish saved files. By default will classify files with random 5-digit ID.
+
+    Returns
+    -------
+        pd.DataFrame:
+            One row per (referent, comparator, comp) triple, with rhm_*, phi_*, and
+            optional sub_* summary columns.
+
+        .csv:
+            If save=True, will save the results dataframe to /results.
+
+        .png:
+            If plot=True, saves a tiled grid of npc heatmaps per metric.
+
+        printed results:
+            If display=True, prints per-component results in the terminal.
+    """
+
+    cl = [cluster] if cluster else []
+    groups = df[group].unique()
+    maindict = {g: df[df[group] == g].drop(labels=group, axis=1) for g in groups}
+    pairings = list(combinations(groups, 2))
+
+    scaler = StandardScaler()
+    feat_cols = df.columns.drop([group, *cl])
+    df_scaled = pd.DataFrame(scaler.fit_transform(df[feat_cols]), columns=feat_cols)
+    _check_rank(df_scaled)
+
+    # Global anchor: pooled-data PCA defines the canonical PC1..PC{npc} homologue. Every
+    # per-fold PCA inside the bootstrap is Procrustes-aligned to this anchor (handled by
+    # rhom when `anchor=` is set), so the bypc column index carries a consistent meaning
+    # across all replicates and pairs.
+    anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
+    anchor_pca.fit(df_scaled)
+    anchor_loadings = anchor_pca.loadings.to_numpy()
+
+    boot_model = rhom(rd=copy.deepcopy(df_scaled.values), bypc=True, n_comp=npc,
+                      method=method, rotation=rotation, corr=corr,
+                      anchor=anchor_loadings)
+    cv = pair_cv(boot=True, k=folds, cluster=cluster)
+
+    # engine.bypc stays False so cv.split is used (symmetric two-sided fold cross like
+    # dir_proj). estimator.bypc=True still makes hom_pairs / pro_cong / subspace_sim
+    # return per-component lists per replicate; we transpose at the bottom.
+    boot_engine = BootstrapEngine(
+        estimator=boot_model,
+        cv=cv,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace,
+    )
+
+    rows = []
+    for ref, comp in pairings:
+        print(f"Running By-Component Direct Projection: {ref} x {comp}")
+
+        _check_rank(maindict[ref].drop(labels=cl, axis=1))
+        _check_rank(maindict[comp].drop(labels=cl, axis=1))
+
+        results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
+        # results layout with estimator.bypc=True, engine.bypc=False:
+        #   results[0]: list-of-lists [n_replicates × npc]  -- |r| per component per replicate
+        #   results[1]: list-of-lists [n_replicates × npc]  -- TCC per component per replicate
+        #   results[2]: list-of-lists [n_replicates × npc]  -- subspace cosines (if subspace=True)
+
+        rhm_per_comp = list(map(list, zip(*results[0])))   # [npc × n_replicates]
+        phi_per_comp = list(map(list, zip(*results[1])))
+
+        # Subspace similarity is a whole-solution property -- collapse each replicate's
+        # per-direction cosines to one mean and broadcast across this pair's npc rows.
+        sub_per_pair = ([float(np.mean(s)) for s in results[2]] if subspace else None)
+
+        for idx in range(npc):
+            meta = {'referent': ref, 'comparator': comp, 'comp': idx + 1}
+            row = _build_row(boot_model.n_comp, rhm_per_comp[idx], phi_per_comp[idx],
+                             sub_data=sub_per_pair, metadata=meta)
+            rows.append(row)
+
+            if display:
+                _display_stats(f"Direct Projection: {ref} x {comp} - Component {idx + 1}", row)
+
+    dirproj_bypc_df = pd.DataFrame(rows)
+
+    if plot:
+        # Persist anchor loadings alongside the stats CSV and attach to the returned
+        # frame so plot_dirproj_bypc can label panels with PC identity if desired.
+        dirproj_bypc_df.attrs["loadings"] = anchor_pca.loadings.copy()
+
+        from ..visualization.rhomplots import plot_dirproj_bypc, plot_aligned_wordclouds
+        setupanalysis(path, file_prefix, includetime=False)
+        plt.close('all')
+
+        # Per-group full-data PCA -- one PCA per group on the group's entire data
+        # (not a bootstrap fold). plot_aligned_wordclouds then Procrustes-aligns each
+        # to the global anchor before rendering, so column k in every group's row
+        # refers to the same homologue defined by the pooled reference.
+        group_loadings = {
+            g: basePCA(n_components=npc, rotation=rotation,
+                       method=method, corr=corr).fit(
+                maindict[g].drop(labels=cl, axis=1, errors='ignore')
+            ).loadings
+            for g in groups
+        }
+        wc_fig = plot_aligned_wordclouds(
+            group_loadings,
+            anchor_loadings=anchor_pca.loadings,
+            n_features=len(df_scaled.columns),
+            show_var=True,
+            title="Per-group components (Procrustes-aligned to pooled reference)",
+        )
+        wc_fig.savefig(
+            os.path.join(path, f"{file_prefix}/{file_prefix}_dj_bypc_wordclouds_{len(df_scaled.columns)}D_{npc}PC.png"),
+            bbox_inches="tight", dpi=150,
+        )
+        plt.show()
+        plt.close(wc_fig)
+
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for name in metrics:
+            fig = plot_dirproj_bypc(dirproj_bypc_df, metric=name)
+            fig.savefig(
+                os.path.join(path, f"{file_prefix}/{file_prefix}_dj_bypc_{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
+                bbox_inches="tight", dpi=150,
+            )
+            plt.show()
+            plt.close(fig)
+
+        loadings_path = os.path.join(
+            path, f"{file_prefix}",
+            f"{file_prefix}_loadings_{len(df_scaled.columns)}D_{npc}PC.csv",
+        )
+        anchor_pca.loadings.to_csv(loadings_path)
+
+    if save:
+        _export_report(dirproj_bypc_df, path, file_prefix,
+                       f"dj_bypc_{len(df_scaled.columns)}D_{npc}PC")
+
+    return dirproj_bypc_df
+
+
+def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
          folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
          subspace=False, path='results', file_prefix=randint(10000, 99999)):
     

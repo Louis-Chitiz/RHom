@@ -4,7 +4,7 @@ from ..core.base_pca import basePCA
 from scipy.linalg import orthogonal_procrustes, subspace_angles
 from scipy.optimize import linear_sum_assignment
 
-from ..preprocessing.data_utils import tcc
+from ..preprocessing.correlations import tcc
 
 
 class rhom(BaseEstimator):
@@ -29,6 +29,14 @@ class rhom(BaseEstimator):
             - Supported methods are "varimax", "promax", "oblimin", "oblimax", "quartimin", "quartimax", and "equamax".
         - bypc: bool, default=False
             - Whether to save component similarity on a by-component basis.
+        - corr: str, default="pearson"
+            - The correlation method to use for calculating component similarity.
+            - Supported methods are "pearson", "spearman", and "polychoric".
+        - anchor: array-like, optional,default=None
+            - (p, n_comp) loadings matrix defining a canonical PC1..PCk frame.
+            - When set, predict / pro_cong align *both* sub-model loadings to this anchor (instead of aligning model_x2 to model_x),
+              and hom_pairs returns the diagonal of the resulting similarity matrix in column-index order rather than the Hungarian permutation.
+              This makes "PC k" carry a consistent meaning across every fit, which is what bypc-style breakdowns require.
 
     Attributes
     ----------
@@ -65,13 +73,14 @@ class rhom(BaseEstimator):
 
     """
     def __init__(self, rd=None, n_comp=None, method='svd', rotation="varimax",
-                 bypc=False, corr='pearson'):
+                 bypc=False, corr='pearson', anchor=None):
             self.rd = rd
             self.n_comp = n_comp
             self.method = method
             self.rotation = rotation
             self.bypc = bypc
             self.corr = corr
+            self.anchor = np.asarray(anchor) if anchor is not None else None
 
             # Sub-models instantiated during fit
             self.model_x = None
@@ -129,13 +138,20 @@ class rhom(BaseEstimator):
         loadings_x = self.model_x.loadings.to_numpy()
         loadings_x2 = self.model_x2.loadings.to_numpy()
 
+        if self.anchor is not None:
+            # Align both sides to the shared anchor frame so column k carries the same
+            # homologue identity in both sets of scores.
+            R_x, _ = orthogonal_procrustes(loadings_x, self.anchor)
+            R_x2, _ = orthogonal_procrustes(loadings_x2, self.anchor)
+            return [np.dot(data, loadings_x @ R_x), np.dot(data, loadings_x2 @ R_x2)]
+
         if self.rotation:
             # Orthogonal Procrustes alignment
             R, _ = orthogonal_procrustes(loadings_x, loadings_x2)
             aligned_loadings_x2 = np.dot(loadings_x2, R.T)
-            
+
             return [np.dot(data, loadings_x), np.dot(data, aligned_loadings_x2)]
-        
+
         return [self.model_x.transform(data), self.model_x2.transform(data)]
 
     def hom_pairs(self,cor_matrix):
@@ -159,6 +175,14 @@ class rhom(BaseEstimator):
         else:
             matrix_block = np.abs(cor_matrix)
 
+        if self.anchor is not None:
+            # Anchor frame already pins column k to the same homologue on both sides,
+            # so read the diagonal directly instead of letting Hungarian repermute it.
+            diag = np.diag(matrix_block)
+            if self.bypc:
+                return list(diag)
+            return float(np.mean(diag))
+
         # Utilize Hungarian matching algorithm to maximize overall weight
         # (linear_sum_assignment minimizes, so we pass negative weights)
         row_ind, col_ind = linear_sum_assignment(-matrix_block)
@@ -180,10 +204,18 @@ class rhom(BaseEstimator):
         """
         loadings_X = self.model_x.loadings.to_numpy()
         loadings_x2 = self.model_x2.loadings.to_numpy()
-        
-        # Align frameworks using orthogonal Procrustes rotation
-        R, _ = orthogonal_procrustes(loadings_X, loadings_x2)
-        loadings_x2 = np.dot(loadings_x2, R.T)
+
+        if self.anchor is not None:
+            # Align both sides to the anchor so the TCC matrix's diagonal compares
+            # the same homologue on both sides for each k.
+            R_x, _ = orthogonal_procrustes(loadings_X, self.anchor)
+            R_x2, _ = orthogonal_procrustes(loadings_x2, self.anchor)
+            loadings_X = loadings_X @ R_x
+            loadings_x2 = loadings_x2 @ R_x2
+        else:
+            # Align frameworks using orthogonal Procrustes rotation
+            R, _ = orthogonal_procrustes(loadings_X, loadings_x2)
+            loadings_x2 = np.dot(loadings_x2, R.T)
 
         # Streamlined 2D matrix build using a clean list comprehension
         tcc_matrix = np.array([

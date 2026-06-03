@@ -1,6 +1,6 @@
 import pandas as pd
-from RHom.rhom.metrics import rhom
-from RHom.core.base_pca import basePCA
+from RHom import rhom
+from RHom import basePCA
 
 data = pd.read_csv("examples/output.csv")
 
