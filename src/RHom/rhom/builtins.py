@@ -68,8 +68,8 @@ def _export_report(df, path, prefix, suffix):
     print(f"Dataframe saved to: {full_path}")
 
 def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
-              boot=1000, save=True, display=False, shuffle=False, cluster=None, subspace=False,
-              path='results', file_prefix=randint(10000, 99999)):
+              boot=1000, save=True, display=False, shuffle=False, cluster=None, stratify=None,
+              subspace=False, path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
     ----------------------
@@ -96,6 +96,14 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
 
+        stratify: str, default=None
+            Optional stratification column for whole-dataset splithalf. When provided
+            (and ``group`` is None), each bootstrap half is drawn proportionally from
+            every level of this column so a small source can't be over-represented in
+            one half. Mutually exclusive with ``group`` (which means "iterate per level"
+            rather than "balance across levels"). Composes with ``cluster``: within each
+            stratum, whole clusters are kept on one side.
+
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
@@ -109,13 +117,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
 
         npc: int, default=None
             Number of components to extract per solution.
-        
+
         rotation: str, default="varimax"
             Rotation method to be performed on referent. "none" for no rotation.
 
         boot: int, default=1000
             Number of bootstrap samples to generate 95% confidence intervals.
-        
+
         save: bool, default=True
             Save outputted split-half reliability to .csv.
 
@@ -135,23 +143,29 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
     -------
         pd.DataFrame:
             The function at minimum returns a pandas dataframe with the results.
-        
+
         .csv:
             If save=True, will save /results to a csv.
 
         printed results:
             If display=True, prints the output directly in the terminal.
     """
-    
-    drop_cols = [c for c in (group, cluster) if c is not None]
+
+    if stratify is not None and group is not None:
+        raise ValueError(
+            "Pass either group= (per-level iteration) or stratify= (balanced sampling "
+            "from each level across whole-dataset halves), not both."
+        )
+
+    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
     df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
     samples = df[group].unique() if group else ['fulldata']
     _check_rank(df_t)
 
     boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(group=group, cluster=cluster, n=boot)
-    
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+
     boot_engine = BootstrapEngine(
         estimator=boot_model,
         cv=cv,
@@ -171,15 +185,213 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
         row = _build_row(boot_model.n_comp, results[0], results[1],
                          sub_data=results[2] if subspace else None, metadata=meta)
         rows.append(row)
-        
+
         if display:
             _display_stats(f"Split-Half Reliability for {sample}", row)
 
     split_df = pd.DataFrame(rows)
     if save:
         _export_report(split_df, path, file_prefix, f"splithalf_{len(df_t.columns)}D_{npc}PC")
-        
+
     return split_df
+
+def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
+                   boot=1000, save=True, plot=True, display=False, shuffle=False, cluster=None,
+                   stratify=None, subspace=False,
+                   path='results', file_prefix=randint(10000, 99999)):
+    """
+    Split-Half Reliability: By-Component
+    ------------------------------------
+    Bootstrapped split-half reliability with a per-component breakdown. For each
+    sample (the whole dataset when ``group=None``, or each level of ``group``), an
+    anchor PCA is fit on the sample's full data to define the canonical PC1..PC{npc}
+    frame; every per-half PCA inside the bootstrap is Procrustes-aligned to that
+    anchor (via ``rhom``'s ``anchor=`` parameter), so the column index k carries a
+    consistent homologue identity across all replicates. The result is one row per
+    (sample, comp) triple with rhm / phi (and optionally sub) CIs computed across
+    bootstrap replicates.
+
+    Same anchor-and-transpose architecture as ``dir_proj_bypc``, with the splithalf
+    resampling protocol substituted for dir_proj's pairwise CV.
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            Decomposition columns plus the grouping / clustering / stratification
+            columns if used.
+
+        group: str, default=None
+            Column heading for per-level iteration. With ``group=None`` the analysis
+            runs on the whole dataset as one sample.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column. Whole clusters are kept on one side
+            of every bootstrap split.
+
+        stratify: str, default=None
+            Optional stratification column for whole-dataset splithalf. When provided
+            (and ``group`` is None), each bootstrap half is drawn proportionally from
+            every level. Mutually exclusive with ``group``.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles. Subspace
+            similarity is a whole-solution property, so per-replicate values are
+            broadcast across the npc rows for that sample (same convention as
+            ``omsamp_bypc`` / ``dir_proj_bypc``).
+
+        corr: str, default="pearson"
+            Correlation matrix for ``method='eigen'``. See ``splithalf`` for options.
+
+        npc: int, default=None
+            Number of components to extract per solution.
+
+        rotation: str, default="varimax"
+            Rotation applied to anchor and per-half PCAs.
+
+        boot: int, default=1000
+            Number of bootstrap halves to draw per sample.
+
+        shuffle: bool, default=False
+            If True, Mantel-shuffle the feature columns *once at the top* and use the
+            shuffled frame for both the anchor fit and the bootstrap halves. Diverges
+            from ``splithalf``'s per-call shuffle so the anchor and the halves share
+            the same null realisation (otherwise the alignment scores compare random
+            halves against a real-structure anchor, which isn't a coherent null).
+
+        save / plot / display / path / file_prefix:
+            Same conventions as the other builtins.
+
+    Returns
+    -------
+        pd.DataFrame:
+            One row per (sample, comp) triple with rhm_*, phi_*, and optional sub_*
+            summary columns. Anchor loadings for the first sample are attached via
+            ``df.attrs["loadings"]`` so ``plot_bypc`` can render wordclouds without a
+            disk round-trip.
+
+        .csv:
+            If save=True.
+
+        .png:
+            If plot=True, one ``plot_bypc`` figure per metric.
+    """
+    if stratify is not None and group is not None:
+        raise ValueError(
+            "Pass either group= (per-level iteration) or stratify= (balanced sampling "
+            "from each level across whole-dataset halves), not both."
+        )
+
+    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
+    samples = df[group].unique() if group else ['fulldata']
+    _check_rank(df_t)
+
+    # One-shot Mantel shuffle so anchor and halves share the same null realisation.
+    # Pass only the feature columns so fullmantel doesn't accidentally treat a numeric
+    # cluster ID as a feature; reassign by .values to overwrite in place.
+    df_input = df.copy()
+    if shuffle:
+        from ..preprocessing.data_utils import fullmantel
+        feat_only = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
+        df_input[feat_only.columns] = fullmantel(feat_only).values
+
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+
+    rows = []
+    anchor_loadings_by_sample = {}
+
+    for sample in samples:
+        print(f"Running By-Component Split-Half: {sample}")
+
+        # Anchor PCA on this sample's full data (the whole dataset when group is None,
+        # or the sample's rows when iterating per group level).
+        if group:
+            sample_data = df_input[df_input[group] == sample].drop(
+                labels=drop_cols, axis=1, errors='ignore'
+            )
+        else:
+            sample_data = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
+
+        anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
+        anchor_pca.fit(sample_data)
+        anchor_loadings_by_sample[sample] = anchor_pca.loadings.copy()
+
+        boot_model = rhom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc,
+                          method=method, rotation=rotation, corr=corr,
+                          anchor=anchor_pca.loadings.to_numpy())
+
+        # engine.bypc=False so cv.redists is used (splithalf path); estimator.bypc=True
+        # plus the anchor makes hom_pairs / pro_cong / subspace_sim return per-component
+        # lists per replicate that we transpose at the bottom. engine.shuffle=False
+        # because we've already shuffled df_input once above.
+        boot_engine = BootstrapEngine(
+            estimator=boot_model,
+            cv=cv,
+            splithalf=True,
+            pro_cong=True,
+            shuffle=False,
+            subspace=subspace,
+        )
+
+        results = boot_engine(X=df_input, y=sample, group=group)
+        # results layout with estimator.bypc=True, engine.bypc=False:
+        #   results[0]: list-of-lists [n_replicates × npc]  -- |r| per component per replicate
+        #   results[1]: list-of-lists [n_replicates × npc]  -- TCC per component per replicate
+        #   results[2]: list-of-lists [n_replicates × npc]  -- subspace cosines (if subspace=True)
+        rhm_per_comp = list(map(list, zip(*results[0])))   # [npc × n_replicates]
+        phi_per_comp = list(map(list, zip(*results[1])))
+
+        # Subspace similarity is a whole-solution property -- collapse each replicate's
+        # per-direction cosines to one mean and broadcast across this sample's npc rows.
+        sub_per_sample = ([float(np.mean(s)) for s in results[2]] if subspace else None)
+
+        for idx in range(npc):
+            meta = ({group: sample} if group else {"Group": "fulldata"})
+            meta["comp"] = idx + 1
+            row = _build_row(boot_model.n_comp, rhm_per_comp[idx], phi_per_comp[idx],
+                             sub_data=sub_per_sample, metadata=meta)
+            rows.append(row)
+
+            if display:
+                _display_stats(f"Split-Half: {sample} - Component {idx + 1}", row)
+
+    splithalf_bypc_df = pd.DataFrame(rows)
+
+    if plot:
+        # Attach anchor loadings so plot_bypc can render wordclouds. When group is set
+        # each sample has its own anchor; we attach the first sample's by default --
+        # users can pass their own via plot_bypc(..., loadings=anchor_loadings_by_sample[<g>]).
+        first_sample = samples[0]
+        splithalf_bypc_df.attrs["loadings"] = anchor_loadings_by_sample[first_sample]
+
+        from ..visualization.rhomplots import plot_bypc
+        setupanalysis(path, file_prefix, includetime=False)
+        plt.close('all')
+
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for name in metrics:
+            fig = plot_bypc(splithalf_bypc_df, metric=name)
+            fig.savefig(
+                os.path.join(path, f"{file_prefix}/{file_prefix}_splithalf_bypc_{len(df_t.columns)}D_{npc}PC_{name}.png"),
+                bbox_inches="tight", dpi=150,
+            )
+            plt.show()
+            plt.close(fig)
+
+        # Persist the first sample's anchor loadings alongside the CSV
+        loadings_path = os.path.join(
+            path, f"{file_prefix}",
+            f"{file_prefix}_loadings_{len(df_t.columns)}D_{npc}PC.csv",
+        )
+        anchor_loadings_by_sample[first_sample].to_csv(loadings_path)
+
+    if save:
+        _export_report(splithalf_bypc_df, path, file_prefix,
+                       f"splithalf_bypc_{len(df_t.columns)}D_{npc}PC")
+
+    return splithalf_bypc_df
+
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
              folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
@@ -326,150 +538,6 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
         _export_report(dirproj_df, path, file_prefix, f"dj{len(df_scaled.columns)}D_{npc}PC")
         
     return dirproj_df
-
-def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-                boot=1000, save=True, display=False, plot=True, shuffle=False, cluster=None,
-                subspace=False, path='results', file_prefix=randint(10000, 99999)):
-    """
-    Omnibus-Sample Reproducibility
-    ------------------------------
-    This function conducts an omnibus-sample reproducibility analysis on your data.
-    It randomly bootstrap reassigns halves of each level of an inputted grouping variable 
-    to be used in either a 'sample' or 'omnibus' subset. The 'sample' subsets generate
-    components representative of that level of the grouping variable, while the 'omnibus'
-    subsets are aggregated with other groups to produce 'common' components. The analysis
-    assesses the component similarity of the orthogonal aggregated set relative to each sample.
-    It computes component similarity with:
-        1) Loading similarity (with Tucker's Congruence Coefficient: Tucker, 1951; See also Lovik et al., 2020)
-        2) Component-score similarity (with R-homologue: Mulholland et al., 2023; See also Everett, 1983)
-
-    Parameters
-    ----------
-
-        df: pd.Dataframe, default=None
-            It should include only the columns to be decomposed and your grouping variable.
-
-        group: str, default=None
-            The column heading for your grouping variable.
-
-        cluster: str, default=None
-            Optional level-2 / clustering column (e.g. participant ID). When provided,
-            whole clusters are kept together in every resample, fold, and split, so a unit
-            never appears on both sides of a comparison. Prevents leakage and
-            pseudoreplication with nested data. Requires at least `folds` distinct clusters
-            per group where cross-validation is used.
-
-        subspace: bool, default=False
-            If True, also report subspace similarity via principal angles between the two
-            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
-
-        corr: str, default="pearson"
-            Which correlation matrix to decompose under `method='eigen'`: "pearson",
-            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
-            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
-            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
-            which is Pearson-only; pass `method='eigen'` to switch correlation type.
-
-        npc: int, default=None
-            Number of components to extract per solution.
-        
-        rotation: str, default="varimax"
-            Rotation method to be performed on omnibus set. "none" for no rotation.
-
-        boot: int, default=1000
-            Number of bootstrap samples to generate 95% confidence intervals.
-        
-        save: bool, default=True
-            Save outputted omnibus-sample reliability to .csv.
-
-        display: bool, default=False
-            Print output in the terminal.
-
-        shuffle: bool, default=False
-            Perform analysis on shuffled "garbage" data.
-
-        path: str, default='results'
-            The path to the output directory.
-
-        file_prefix: str, default=randint(10000,99999)
-            Provide name to distinguish saved files. By default will classify files with random 5-digit ID.
-
-    Returns
-    -------
-        pd.DataFrame:
-            The function at minimum returns a pandas dataframe with the results.
-        
-        .csv:
-            If save=True, will save /results to a csv.
-
-        printed results:
-            If display=True, prints the output directly in the terminal.
-    """
-
-    drop_cols = [c for c in (group, cluster) if c is not None]
-    samples = df[group].unique()
-    df_t = df.drop(labels=drop_cols, axis=1)
-    _check_rank(df_t)
-
-    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc,
-                      method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot)
-    
-    # Initialize engine for omnibus resampling profile
-    boot_engine = BootstrapEngine(
-        estimator=boot_model,
-        cv=cv,
-        omnibus=True,
-        pro_cong=True,
-        shuffle=shuffle,
-        subspace=subspace
-    )
-
-    rows = []
-    total_rhm, total_phi, total_sub = [], [], []
-
-    for sample in samples:
-        print(f"Running Omnibus x {sample}")
-        results = boot_engine(X=df, y=sample, group=group)
-
-        total_rhm.extend(results[0])
-        total_phi.extend(results[1])
-        if subspace:
-            total_sub.extend(results[2])
-
-        row = _build_row(boot_model.n_comp, results[0], results[1],
-                         sub_data=results[2] if subspace else None, metadata={group: sample})
-        rows.append(row)
-
-        if display:
-            _display_stats(f'Omnibus x {sample}', row)
-
-    # Append Global Summary Row
-    total_row = _build_row(boot_model.n_comp, total_rhm, total_phi,
-                           sub_data=total_sub if subspace else None, metadata={group: "Total"})
-    rows.append(total_row)
-    
-    if display:
-        _display_stats("Overall Omnibus Summary", total_row)
-
-    omsamp_df = pd.DataFrame(rows)
-
-    if plot:
-        from ..visualization.rhomplots import plot_omni
-        setupanalysis(path, file_prefix, includetime=False)
-
-        plt.close('all')
-        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
-        for metric in metrics:
-            fig = plot_omni(omsamp_df, metric=metric, title=f"Omnibus-Sample Reproducibility: {metric.upper()}", n_vars=len(df_t.columns))
-            fig.savefig(os.path.join(path, f"{file_prefix}/{file_prefix}_omsamp_{len(df_t.columns)}D_{npc}PC_{metric}.png"), bbox_inches="tight", dpi=150)
-            plt.show()
-            plt.close(fig)
-
-    if save:
-        _export_report(omsamp_df, path, file_prefix, f"omsamp_{len(df_t.columns)}D_{npc}PC")
-        
-    return omsamp_df
 
 def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
                   folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
@@ -681,6 +749,149 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
 
     return dirproj_bypc_df
 
+def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
+                boot=1000, save=True, display=False, plot=True, shuffle=False, cluster=None,
+                subspace=False, path='results', file_prefix=randint(10000, 99999)):
+    """
+    Omnibus-Sample Reproducibility
+    ------------------------------
+    This function conducts an omnibus-sample reproducibility analysis on your data.
+    It randomly bootstrap reassigns halves of each level of an inputted grouping variable 
+    to be used in either a 'sample' or 'omnibus' subset. The 'sample' subsets generate
+    components representative of that level of the grouping variable, while the 'omnibus'
+    subsets are aggregated with other groups to produce 'common' components. The analysis
+    assesses the component similarity of the orthogonal aggregated set relative to each sample.
+    It computes component similarity with:
+        1) Loading similarity (with Tucker's Congruence Coefficient: Tucker, 1951; See also Lovik et al., 2020)
+        2) Component-score similarity (with R-homologue: Mulholland et al., 2023; See also Everett, 1983)
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            It should include only the columns to be decomposed and your grouping variable.
+
+        group: str, default=None
+            The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
+
+        npc: int, default=None
+            Number of components to extract per solution.
+        
+        rotation: str, default="varimax"
+            Rotation method to be performed on omnibus set. "none" for no rotation.
+
+        boot: int, default=1000
+            Number of bootstrap samples to generate 95% confidence intervals.
+        
+        save: bool, default=True
+            Save outputted omnibus-sample reliability to .csv.
+
+        display: bool, default=False
+            Print output in the terminal.
+
+        shuffle: bool, default=False
+            Perform analysis on shuffled "garbage" data.
+
+        path: str, default='results'
+            The path to the output directory.
+
+        file_prefix: str, default=randint(10000,99999)
+            Provide name to distinguish saved files. By default will classify files with random 5-digit ID.
+
+    Returns
+    -------
+        pd.DataFrame:
+            The function at minimum returns a pandas dataframe with the results.
+        
+        .csv:
+            If save=True, will save /results to a csv.
+
+        printed results:
+            If display=True, prints the output directly in the terminal.
+    """
+
+    drop_cols = [c for c in (group, cluster) if c is not None]
+    samples = df[group].unique()
+    df_t = df.drop(labels=drop_cols, axis=1)
+    _check_rank(df_t)
+
+    boot_model = rhom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
+    cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot)
+    
+    # Initialize engine for omnibus resampling profile
+    boot_engine = BootstrapEngine(
+        estimator=boot_model,
+        cv=cv,
+        omnibus=True,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace
+    )
+
+    rows = []
+    total_rhm, total_phi, total_sub = [], [], []
+
+    for sample in samples:
+        print(f"Running Omnibus x {sample}")
+        results = boot_engine(X=df, y=sample, group=group)
+
+        total_rhm.extend(results[0])
+        total_phi.extend(results[1])
+        if subspace:
+            total_sub.extend(results[2])
+
+        row = _build_row(boot_model.n_comp, results[0], results[1],
+                         sub_data=results[2] if subspace else None, metadata={group: sample})
+        rows.append(row)
+
+        if display:
+            _display_stats(f'Omnibus x {sample}', row)
+
+    # Append Global Summary Row
+    total_row = _build_row(boot_model.n_comp, total_rhm, total_phi,
+                           sub_data=total_sub if subspace else None, metadata={group: "Total"})
+    rows.append(total_row)
+    
+    if display:
+        _display_stats("Overall Omnibus Summary", total_row)
+
+    omsamp_df = pd.DataFrame(rows)
+
+    if plot:
+        from ..visualization.rhomplots import plot_omni
+        setupanalysis(path, file_prefix, includetime=False)
+
+        plt.close('all')
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for metric in metrics:
+            fig = plot_omni(omsamp_df, metric=metric, title=f"Omnibus-Sample Reproducibility: {metric.upper()}", n_vars=len(df_t.columns))
+            fig.savefig(os.path.join(path, f"{file_prefix}/{file_prefix}_omsamp_{len(df_t.columns)}D_{npc}PC_{metric}.png"), bbox_inches="tight", dpi=150)
+            plt.show()
+            plt.close(fig)
+
+    if save:
+        _export_report(omsamp_df, path, file_prefix, f"omsamp_{len(df_t.columns)}D_{npc}PC")
+        
+    return omsamp_df
 
 def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax',
                   corr='pearson', cluster=None, save=True, plot=True, display=False,
@@ -754,34 +965,30 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
     -----
     Let
 
-        L        ∈ ℝ^{p × npc}     omnibus loadings (basePCA output)
-        ℓₖ       = L[:, k] / ‖L[:, k]‖           unit-normalised k-th column
-        X̃_g     ∈ ℝ^{n_g × p}     group g's data after column-wise standardisation
-        R_g     = X̃_gᵀ X̃_g / n_g             within-group correlation matrix
-        p                                       number of decomposed features
+    * $L \in \mathbb{R}^{p \times \text{npc}}$ represent the omnibus loadings (basePCA output)
+    * $\ell_k = L[:, k] / \Vert{}L[:, k]\Vert{}$ represent the unit-normalised $k$-th column
+    * $\tilde{X}_g \in \mathbb{R}^{n_g \times p}$ represent group $g$'s data after column-wise standardisation
+    * $R_g = \tilde{X}_g^T \tilde{X}_g / n_g$ represent the within-group correlation matrix
+    * $p$ represent the number of decomposed features
 
-    Then component k's variance share in group g is
+    Then component $k$'s variance share in group $g$ is
 
-                    ℓₖᵀ · R_g · ℓₖ
-        varᵍ(k) = ───────────────── × 100 %
-                          p
+    $$\text{var}^g(k) = \frac{\ell_k^T \cdot R_g \cdot \ell_k}{p} \times 100\%$$
 
     which equals, equivalently, the projected-score formulation
 
-                    ‖X̃_g · ℓₖ‖²
-        varᵍ(k) = ──────────────── × 100 %
-                       n_g · p
+    $$\text{var}^g(k) = \frac{\Vert{}\tilde{X}_g \cdot \ell_k\Vert{}^2}{n_g \cdot p} \times 100\%$$
 
-    used inside the implementation. Summing over k gives the total variance that
-    the omnibus solution captures in group g (≤ 100 %; equal to 100 % only when
-    npc = p).
+    used inside the implementation. Summing over $k$ gives the total variance that
+    the omnibus solution captures in group $g$ ($\le 100\%$; equal to $100\%$ only when
+    $\text{npc} = p$).
 
-    A random npc-dimensional subspace on standardised isotropic data captures, in
-    expectation, npc / p × 100 % of the within-group variance, which the
-    ``plot_omni_variance`` figure marks with a dashed horizontal line. Because
+    A random $\text{npc}$-dimensional subspace on standardised isotropic data captures, in
+    expectation, $\frac{\text{npc}}{p} \times 100\%$ of the within-group variance, which the
+    `plot_omni_variance` figure marks with a dashed horizontal line. Because
     variance is a *quadratic* projection, this baseline is the *square* of the
-    canonical-correlation baseline √(npc/p) used for the reproducibility metrics
-    (rhm, phi, sub).
+    canonical-correlation baseline $\sqrt{\frac{\text{npc}}{p}}$ used for the
+    reproducibility metrics (rhm, phi, sub).
 
     .. math::
 
@@ -847,7 +1054,6 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
         _export_report(omni_var_df, path, file_prefix, f"omni_var_{p}D_{npc}PC")
 
     return omni_var_df
-
 
 def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
          folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
@@ -1008,3 +1214,187 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
         _export_report(stats_bypc, path, file_prefix, f"bypc_{len(df_t.columns)}D_{npc}PC")
 
     return stats_bypc
+
+def holdout_cv(df=None, group=None, folds=None, npc=None, method='svd', rotation='varimax',
+               corr='pearson', cluster=None, save=True, plot=True, display=False,
+               shuffle=False, subspace=False, path='results',
+               file_prefix=randint(10000, 99999)):
+    """
+    Held-Out Cross-Validation
+    -------------------------
+    Cross-validated component reproducibility: in each fold the PCA is fit on the
+    training rows and the held-out rows independently, and the two solutions are
+    compared via rhm / phi (and optionally sub). Three modes, selected by which of
+    ``group`` / ``folds`` are passed:
+
+        * ``group='colname'`` only -- leave-one-group-out: each level of ``colname``
+          is held out as the test set once.
+        * ``folds=K`` only -- random K-fold partition (cluster-aware when
+          ``cluster=`` is set, so whole clusters land in one fold).
+        * ``group='colname'`` AND ``folds=K`` -- stratified K-fold: each fold pulls
+          proportional rows from every level of ``colname`` (cluster-aware within
+          each stratum when ``cluster=`` is also set).
+
+    Each fold returns point estimates (no bootstrap inside a fold); the final
+    "summary" row holds the mean and across-fold CI of each metric.
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            Decomposition columns plus the grouping / clustering columns if used.
+
+        group: str, default=None
+            Column name driving leave-one-group-out splits when used alone, or the
+            stratifier when paired with ``folds=K``.
+
+        folds: int, default=None
+            Number of K-fold splits. Random partition when used alone; stratified by
+            ``group`` when both are passed.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column. With ``folds=K`` (random or
+            stratified), whole clusters are kept together within a fold (requires at
+            least K distinct clusters; in stratified mode, K within each stratum).
+            With ``group=...`` only, cluster is irrelevant since groups already define
+            the partition.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles.
+
+        corr: str, default="pearson"
+            Correlation matrix for ``method='eigen'``: "pearson", "spearman", or
+            "polychoric". Ignored under ``method='svd'``.
+
+        npc: int, default=None
+            Number of components to extract per fold.
+
+        rotation: str, default="varimax"
+            Rotation applied to each fold's PCA.
+
+        shuffle: bool, default=False
+            If True, Mantel-shuffle the feature columns first (destroys cross-variable
+            structure while preserving marginals) to produce a noise-floor null run.
+
+        save / plot / display / path / file_prefix:
+            Same conventions as the other builtins.
+
+    Returns
+    -------
+        pd.DataFrame:
+            One row per fold with ``rhm_x`` / ``phi_x`` (and ``sub_x`` if requested)
+            point estimates, plus a final ``fold='summary'`` row holding the mean
+            and across-fold CI for each metric.
+
+        .csv:
+            If save=True.
+
+        .png:
+            If plot=True, one horizontal-bar figure per metric via ``plot_omni``.
+    """
+    if group is None and folds is None:
+        raise ValueError(
+            "holdout_cv requires at least one of group= (leave-one-group-out) or "
+            "folds= (k-fold). Got both None."
+        )
+
+    drop_cols = [c for c in (group, cluster) if c is not None]
+    feat_cols = df.columns.drop(drop_cols) if drop_cols else df.columns
+    _check_rank(df[feat_cols])
+
+    # Optional Mantel shuffle for the null baseline: column-wise independent
+    # permutation destroys cross-variable structure while preserving marginals.
+    # Pass only the feature columns so fullmantel doesn't accidentally treat a
+    # numeric cluster ID as a feature; reassign by .values to overwrite in place.
+    df_input = df.copy()
+    if shuffle:
+        from ..preprocessing.data_utils import fullmantel
+        df_input[feat_cols] = fullmantel(df_input[feat_cols]).values
+
+    # Mode dispatch: pair_cv's stratified_kfold flag flips holdout_split into the
+    # stratified-K-fold path; otherwise self.group toggles LOGO and falling through
+    # gives plain K-fold.
+    if group is not None and folds is not None:
+        cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True)
+        mode = f"{folds}-fold stratified by '{group}'"
+    elif group is not None:
+        cv = pair_cv(group=group, cluster=cluster)
+        mode = f"leave-one-group-out by '{group}'"
+    else:
+        cv = pair_cv(k=folds, cluster=cluster)
+        mode = f"{folds}-fold"
+
+    boot_model = rhom(rd=copy.deepcopy(df_input[feat_cols].values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
+
+    rows = []
+    rhm_vals, phi_vals, sub_vals = [], [], []
+
+    print(f"Running Held-Out CV ({mode})")
+    for train, test, label in cv.holdout_split(df_input):
+        boot_model.fit(train, test)
+        preds = boot_model.predict()
+        corrs = np.corrcoef(preds[0], preds[1], rowvar=False)
+
+        rhm_val = float(boot_model.hom_pairs(corrs))
+        phi_val = float(boot_model.pro_cong())
+        sub_val = float(boot_model.subspace_sim()) if subspace else None
+
+        rhm_vals.append(rhm_val)
+        phi_vals.append(phi_val)
+        if subspace:
+            sub_vals.append(sub_val)
+
+        # Per-fold row: pass a single-value "distribution" to _build_row so the schema
+        # matches the summary row exactly (CIs and SE collapse to the point estimate;
+        # zero-width error bars on the plot mark these as deterministic per-fold scores).
+        meta = {"fold": label}
+        row = _build_row(boot_model.n_comp, [rhm_val], [phi_val],
+                         sub_data=[sub_val] if subspace else None, metadata=meta)
+        rows.append(row)
+
+        if display:
+            extras = f", sub={sub_val:.3g}" if subspace else ""
+            print(f"  held out '{label}': rhm={rhm_val:.3g}, phi={phi_val:.3g}{extras}")
+
+    # Cross-fold summary: same _build_row call but fed the actual fold-level distribution,
+    # so rhm_se / rhm_LCI / rhm_UCI report the across-fold spread.
+    summary_row = _build_row(
+        boot_model.n_comp, rhm_vals, phi_vals,
+        sub_data=sub_vals if subspace else None,
+        metadata={"fold": "summary"},
+    )
+    rows.append(summary_row)
+
+    if display:
+        _display_stats(f"Held-Out CV summary ({mode})", summary_row)
+
+    holdout_df = pd.DataFrame(rows)
+
+    if plot:
+        from ..visualization.rhomplots import plot_omni
+        setupanalysis(path, file_prefix, includetime=False)
+        plt.close('all')
+
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for name in metrics:
+            # plot_omni's "Total" guard drops the omni_sample summary row; here we want
+            # the summary row visible (it's the headline number), so we pass group='fold'
+            # explicitly and rely on the label being 'summary' (not 'Total').
+            fig = plot_omni(holdout_df, group="fold", metric=name,
+                            n_vars=len(feat_cols),
+                            title=f"Held-Out CV ({mode}): {name.upper()}")
+            fig.savefig(
+                os.path.join(path, f"{file_prefix}/{file_prefix}_holdout_cv_{len(feat_cols)}D_{npc}PC_{name}.png"),
+                bbox_inches="tight", dpi=150,
+            )
+            plt.show()
+            plt.close(fig)
+
+    if save:
+        _export_report(holdout_df, path, file_prefix,
+                       f"holdout_cv_{len(feat_cols)}D_{npc}PC")
+
+    return holdout_df
+
+

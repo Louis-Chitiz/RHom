@@ -68,7 +68,7 @@ def interpret_kmo(kmo):
 
     return f"KMO = {k:.2f}, which is {interpretation} for dimension reduction."
 
-def parallel_analysis(df, n_iter: int = 1000, percentile: float = 95, plot: bool = True, seed: int = None):
+def parallel_analysis(df, n_iter: int = 1000, percentile: float = 95, plot: bool = True, title: str = "Parallel Analysis", seed: int = None):
     """
     Horn's Parallel Analysis
     ------------------------
@@ -135,7 +135,7 @@ def parallel_analysis(df, n_iter: int = 1000, percentile: float = 95, plot: bool
         ax.plot(comps, random_pct, "s--", color="#C44E52", label=f"Random ({percentile:g}th pct)")
         ax.plot(comps, random_mean, ":", color="0.5", label="Random (mean)")
         ax.axvline(n_components + 0.5, color="0.3", linewidth=1)
-        ax.set_title(f"Parallel Analysis: retain {n_components} component{'s' if n_components != 1 else ''}")
+        ax.set_title(f"{title}: retain {n_components} component{'s' if n_components != 1 else ''}")
         ax.set_xlabel("Component")
         ax.set_ylabel("Eigenvalue")
         ax.set_xticks(comps)

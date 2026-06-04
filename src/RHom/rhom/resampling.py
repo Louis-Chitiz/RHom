@@ -55,13 +55,15 @@ class pair_cv():
         """
 
     def __init__(
-            self, 
+            self,
             k: int = 5,
             n: int = 1000,
             boot: bool = False,
             omnibus: bool = False,
             group: Optional[str] = None,
-            cluster: Optional[str] = None
+            cluster: Optional[str] = None,
+            stratify: Optional[str] = None,
+            stratified_kfold: bool = False,
         ) -> None:
             self.n_splits = k
             self.n_redists = n
@@ -69,6 +71,15 @@ class pair_cv():
             self.omnibus = omnibus
             self.group = group
             self.cluster = cluster
+            # Stratification: when set, half-construction (splithalf) and k-fold partitioning
+            # (holdout) draw proportionally from each level of this column instead of from
+            # the global pool. Composes with `cluster` -- stratification happens first, and
+            # within each stratum clusters are kept intact.
+            self.stratify = stratify
+            # Toggle that lets holdout_split distinguish stratified k-fold from LOGO when
+            # both `group` and folds are meaningful (the holdout_cv builtin sets stratify
+            # = the user's group column and flips this flag on).
+            self.stratified_kfold = stratified_kfold
 
     @staticmethod
     def standardize(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,7 +98,7 @@ class pair_cv():
         df = df.copy()
         is_target = self._target_mask(df, mask, target_val)
 
-        drop = [c for c in (self.group, self.cluster) if c and c in df.columns]
+        drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in df.columns]
         half1 = df[is_target].drop(labels=drop, axis=1, errors='ignore')
         half2 = df[~is_target].drop(labels=drop, axis=1, errors='ignore')
 
@@ -97,9 +108,18 @@ class pair_cv():
         """
         Boolean row selector for the target subset.
 
-        With `cluster` set, whole level-2 units are selected together until the target row
-        count is reached; otherwise the row mask is shuffled and applied directly.
+        Dispatch order:
+            * ``self.stratify`` set -- pick ~half of each stratum's rows (cluster-aware
+              within each stratum when ``self.cluster`` is also set). ``mask`` /
+              ``target_val`` are ignored: the stratified case always produces a roughly
+              50/50 split, with the complement returned as the other half.
+            * ``self.cluster`` set -- whole clusters are taken together until the
+              ``mask`` target count is met.
+            * otherwise -- the row mask is shuffled globally and applied directly.
         """
+        if self.stratify and self.stratify in df.columns:
+            return self._stratified_target_mask(df)
+
         if self.cluster and self.cluster in df.columns:
             target_size = int(np.sum(np.asarray(mask) == target_val))
             return df.index.isin(self._cluster_partition(df, target_size))
@@ -107,6 +127,28 @@ class pair_cv():
         mask = np.array(mask, copy=True)
         np.random.shuffle(mask)
         return np.asarray(mask) == target_val
+
+    def _stratified_target_mask(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Boolean mask selecting ``floor(n_stratum / 2)`` rows from each stratum.
+
+        The complement (returned by ``_assign_model`` as the second half) holds the
+        remaining ``ceil(n_stratum / 2)`` rows per stratum, so a roughly equal sample
+        from every level lands on each side. With ``self.cluster`` set, whole clusters
+        are kept together within each stratum.
+        """
+        chosen_indices: List = []
+        for level in df[self.stratify].unique():
+            level_df = df[df[self.stratify] == level]
+            target_size = len(level_df) // 2
+            if target_size == 0:
+                continue
+            if self.cluster and self.cluster in df.columns:
+                level_chosen = self._cluster_partition(level_df, target_size)
+            else:
+                level_chosen = np.random.choice(level_df.index, size=target_size, replace=False)
+            chosen_indices.extend(np.asarray(level_chosen).tolist())
+        return df.index.isin(chosen_indices)
 
     def _cluster_partition(self, df: pd.DataFrame, target_size: int) -> np.ndarray:
         """Pick whole clusters (shuffled) until at least `target_size` rows are gathered."""
@@ -124,9 +166,9 @@ class pair_cv():
         return np.concatenate(chosen) if chosen else np.asarray([])
 
     def _to_features(self, data: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """Return decomposition columns as a numpy array, dropping any group/cluster labels."""
+        """Return decomposition columns as a numpy array, dropping any group / cluster / stratify labels."""
         if hasattr(data, 'columns'):
-            drop = [c for c in (self.group, self.cluster) if c and c in data.columns]
+            drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in data.columns]
             data = data.drop(labels=drop, axis=1) if drop else data
             return np.array(data.values, copy=True)
         return np.array(data, copy=True)
@@ -149,7 +191,28 @@ class pair_cv():
         arr = self._to_features(data)
         np.random.shuffle(arr)
         return np.array_split(arr, self.n_splits)
-    
+
+    def _stratified_make_folds(self, data: pd.DataFrame) -> List[np.ndarray]:
+        """
+        K folds with proportional sampling from each stratum.
+
+        For each level of ``self.stratify`` the rows are partitioned into ``n_splits``
+        folds via ``_make_folds`` (which is cluster-aware when ``self.cluster`` is set),
+        and the i-th fold is the concatenation of the i-th sub-fold from every stratum.
+        Returns a list of feature arrays (group / cluster / stratify columns stripped
+        by ``_to_features`` inside ``_make_folds``).
+        """
+        if not (self.stratify and self.stratify in data.columns):
+            raise ValueError("stratified_make_folds requires self.stratify to be set and present in data.")
+
+        folds: List[List[np.ndarray]] = [[] for _ in range(self.n_splits)]
+        for level in data[self.stratify].unique():
+            level_data = data[data[self.stratify] == level]
+            for i, sub in enumerate(self._make_folds(level_data)):
+                if len(sub) > 0:
+                    folds[i].append(sub)
+        return [np.concatenate(parts, axis=0) if parts else np.empty((0, 0)) for parts in folds]
+
     def omni_prep(self, df: pd.DataFrame, subrows: Optional[Union[int, float]] = None) -> Dict[str, pd.DataFrame]:
         """
         Prepares data for by-component omnibus-sample reproducibility.
@@ -253,6 +316,50 @@ class pair_cv():
             boot_folds = list(product(boot_combinations, repeat=2))
             for fold_pair in boot_folds:
                 yield X_arr, np.concatenate([x_c[v] for v in fold_pair[1]], axis=0)
+
+    def holdout_split(self, X: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray, str], None, None]:
+        """
+        Held-out cross-validation splits: each iteration yields ``(train, test, label)``.
+
+        Mode toggle (checked in order):
+            * ``self.stratified_kfold`` AND ``self.stratify`` set on X --
+              stratified K-fold: each fold contains proportional rows from every level
+              of ``self.stratify``. ``label`` is ``"fold{i}"``.
+            * ``self.group`` set and present on X -- leave-one-group-out: each level
+              of ``self.group`` held out as the test set once. ``label`` is the group's
+              name.
+            * otherwise -- random K-fold partition (cluster-aware when ``self.cluster``
+              is set on a DataFrame, via the same ``_make_folds`` logic used by
+              ``split`` / ``bypc_split``). ``label`` is ``"fold{i}"``.
+
+        Standardisation is NOT applied here -- the estimator (``rhom`` -> ``basePCA``)
+        standardises each fitted side internally, so train and test are scaled against
+        their own statistics rather than a shared one. This matches the behaviour of
+        ``split`` and ``bypc_split``.
+        """
+        if (self.stratified_kfold and self.stratify is not None
+                and hasattr(X, "columns") and self.stratify in X.columns):
+            folds = self._stratified_make_folds(X)
+            nf = len(folds)
+            for i in range(nf):
+                train = np.concatenate([folds[j] for j in range(nf) if j != i], axis=0)
+                yield train, folds[i], f"fold{i + 1}"
+            return
+
+        if self.group is not None and hasattr(X, "columns") and self.group in X.columns:
+            drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in X.columns]
+            for g in X[self.group].unique():
+                is_test = X[self.group] == g
+                train = X[~is_test].drop(labels=drop, axis=1, errors='ignore').values
+                test = X[is_test].drop(labels=drop, axis=1, errors='ignore').values
+                yield train, test, str(g)
+            return
+
+        folds = self._make_folds(X)
+        nf = len(folds)
+        for i in range(nf):
+            train = np.concatenate([folds[j] for j in range(nf) if j != i], axis=0)
+            yield train, folds[i], f"fold{i + 1}"
 
     def redists(self, df: pd.DataFrame, subset: Optional[str] = None) -> Generator[List[pd.DataFrame], None, None]:
         """
