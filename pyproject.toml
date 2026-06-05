@@ -32,7 +32,8 @@ dependencies = [
     "scikit-learn",
     "adjustText",
     "wordcloud",
-    "factor_analyzer"
+    "factor_analyzer",
+    "tqdm"
 ]
 
 [tool.setuptools.packages.find]

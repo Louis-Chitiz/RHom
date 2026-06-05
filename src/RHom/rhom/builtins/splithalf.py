@@ -1,0 +1,352 @@
+"""
+Split-half reliability analyses.
+
+``splithalf`` is the aggregate version (bootstrap mean reproducibility); ``splithalf_bypc``
+is the per-component breakdown anchored against a fixed per-sample reference frame
+(same architecture as ``dir_proj_bypc``, with the splithalf resampling protocol).
+"""
+from ..._deps import pd, np, randint, plt
+
+import os
+import copy
+
+from ...core.base_pca import basePCA
+from ...preprocessing.preliminary import _check_rank
+from ...io.save import setupanalysis
+
+from ..metrics import RHom
+from ..resampling import pair_cv
+from ..bootstrap import BootstrapEngine
+
+from ._reporting import _build_row, _display_stats, _export_report
+
+
+def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
+              boot=1000, save=True, display=False, shuffle=False, cluster=None, stratify=None,
+              subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+    """
+    Split-Half Reliability
+    ----------------------
+    This function conducts a bootstrapped split-half reliability analysis
+    on your dataframe. It can do so on a full dataset, or at each level of a
+    grouping variable. It simply bootstrap reassigns random halves of the data
+    into two subsets and computes their component similarity based on:
+        1) Loading similarity (with Tucker's Congruence Coefficient: Tucker, 1951; See also Lovik et al., 2020)
+        2) Component-score similarity (with R-homologue: Mulholland et al., 2023; See also Everett, 1983)
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            It should include only the columns to be decomposed and your grouping variable.
+
+        group: str, default=None
+            The column heading for your grouping variable.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column (e.g. participant ID). When provided,
+            whole clusters are kept together in every resample, fold, and split, so a unit
+            never appears on both sides of a comparison. Prevents leakage and
+            pseudoreplication with nested data. Requires at least `folds` distinct clusters
+            per group where cross-validation is used.
+
+        stratify: str, default=None
+            Optional stratification column for whole-dataset splithalf. When provided
+            (and ``group`` is None), each bootstrap half is drawn proportionally from
+            every level of this column so a small source can't be over-represented in
+            one half. Mutually exclusive with ``group`` (which means "iterate per level"
+            rather than "balance across levels"). Composes with ``cluster``: within each
+            stratum, whole clusters are kept on one side.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles between the two
+            loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
+
+        corr: str, default="pearson"
+            Which correlation matrix to decompose under `method='eigen'`: "pearson",
+            "spearman" (rank correlation, ordinal-friendly), or "polychoric" (latent
+            correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
+            genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
+            which is Pearson-only; pass `method='eigen'` to switch correlation type.
+
+        npc: int, default=None
+            Number of components to extract per solution.
+
+        rotation: str, default="varimax"
+            Rotation method to be performed on referent. "none" for no rotation.
+
+        boot: int, default=1000
+            Number of bootstrap samples to generate 95% confidence intervals.
+
+        save: bool, default=True
+            Save outputted split-half reliability to .csv.
+
+        display: bool, default=False
+            Print output in the terminal.
+
+        shuffle: bool, default=False
+            Perform analysis on shuffled "garbage" data.
+
+        path: str, default='results'
+            The path to the output directory.
+
+        file_prefix: str, default=randint(10000,99999)
+            Provide name to distinguish saved files. By default will classify files with random 5-digit ID.
+
+    Returns
+    -------
+        pd.DataFrame:
+            The function at minimum returns a pandas dataframe with the results.
+
+        .csv:
+            If save=True, will save /results to a csv.
+
+        printed results:
+            If display=True, prints the output directly in the terminal.
+    """
+
+    if stratify is not None and group is not None:
+        raise ValueError(
+            "Pass either group= (per-level iteration) or stratify= (balanced sampling "
+            "from each level across whole-dataset halves), not both."
+        )
+
+    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
+    samples = df[group].unique() if group else ['fulldata']
+    _check_rank(df_t)
+
+    boot_model = RHom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+                      method=method, rotation=rotation, corr=corr)
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+
+    boot_engine = BootstrapEngine(
+        estimator=boot_model,
+        cv=cv,
+        splithalf=True,
+        pro_cong=True,
+        shuffle=shuffle,
+        subspace=subspace,
+        progress=progress,
+        progress_desc="Split-half bootstrap",
+    )
+
+    rows = []
+    for sample in samples:
+        print(f"Running Split-Half: {sample}")
+        # Execute via the unified __call__ interface
+        results = boot_engine(X=df, y=sample, group=group)
+
+        meta = {group: sample} if group else {"Group": "fulldata"}
+        row = _build_row(boot_model.n_comp, results[0], results[1],
+                         sub_data=results[2] if subspace else None, metadata=meta)
+        rows.append(row)
+
+        if display:
+            _display_stats(f"Split-Half Reliability for {sample}", row)
+
+    split_df = pd.DataFrame(rows)
+    if save:
+        _export_report(split_df, path, file_prefix, f"splithalf_{len(df_t.columns)}D_{npc}PC")
+
+    return split_df
+
+
+def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
+                   boot=1000, save=True, plot=True, display=False, shuffle=False, cluster=None,
+                   stratify=None, subspace=False, progress=True,
+                   path='results', file_prefix=randint(10000, 99999)):
+    """
+    Split-Half Reliability: By-Component
+    ------------------------------------
+    Bootstrapped split-half reliability with a per-component breakdown. For each
+    sample (the whole dataset when ``group=None``, or each level of ``group``), an
+    anchor PCA is fit on the sample's full data to define the canonical PC1..PC{npc}
+    frame; every per-half PCA inside the bootstrap is Procrustes-aligned to that
+    anchor (via ``rhom``'s ``anchor=`` parameter), so the column index k carries a
+    consistent homologue identity across all replicates. The result is one row per
+    (sample, comp) triple with rhm / phi (and optionally sub) CIs computed across
+    bootstrap replicates.
+
+    Same anchor-and-transpose architecture as ``dir_proj_bypc``, with the splithalf
+    resampling protocol substituted for dir_proj's pairwise CV.
+
+    Parameters
+    ----------
+
+        df: pd.Dataframe, default=None
+            Decomposition columns plus the grouping / clustering / stratification
+            columns if used.
+
+        group: str, default=None
+            Column heading for per-level iteration. With ``group=None`` the analysis
+            runs on the whole dataset as one sample.
+
+        cluster: str, default=None
+            Optional level-2 / clustering column. Whole clusters are kept on one side
+            of every bootstrap split.
+
+        stratify: str, default=None
+            Optional stratification column for whole-dataset splithalf. When provided
+            (and ``group`` is None), each bootstrap half is drawn proportionally from
+            every level. Mutually exclusive with ``group``.
+
+        subspace: bool, default=False
+            If True, also report subspace similarity via principal angles. Subspace
+            similarity is a whole-solution property, so per-replicate values are
+            broadcast across the npc rows for that sample (same convention as
+            ``omsamp_bypc`` / ``dir_proj_bypc``).
+
+        corr: str, default="pearson"
+            Correlation matrix for ``method='eigen'``. See ``splithalf`` for options.
+
+        npc: int, default=None
+            Number of components to extract per solution.
+
+        rotation: str, default="varimax"
+            Rotation applied to anchor and per-half PCAs.
+
+        boot: int, default=1000
+            Number of bootstrap halves to draw per sample.
+
+        shuffle: bool, default=False
+            If True, Mantel-shuffle the feature columns *once at the top* and use the
+            shuffled frame for both the anchor fit and the bootstrap halves. Diverges
+            from ``splithalf``'s per-call shuffle so the anchor and the halves share
+            the same null realisation (otherwise the alignment scores compare random
+            halves against a real-structure anchor, which isn't a coherent null).
+
+        save / plot / display / path / file_prefix:
+            Same conventions as the other builtins.
+
+    Returns
+    -------
+        pd.DataFrame:
+            One row per (sample, comp) triple with rhm_*, phi_*, and optional sub_*
+            summary columns. Anchor loadings for the first sample are attached via
+            ``df.attrs["loadings"]`` so ``plot_bypc`` can render wordclouds without a
+            disk round-trip.
+
+        .csv:
+            If save=True.
+
+        .png:
+            If plot=True, one ``plot_bypc`` figure per metric.
+    """
+    if stratify is not None and group is not None:
+        raise ValueError(
+            "Pass either group= (per-level iteration) or stratify= (balanced sampling "
+            "from each level across whole-dataset halves), not both."
+        )
+
+    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
+    samples = df[group].unique() if group else ['fulldata']
+    _check_rank(df_t)
+
+    # One-shot Mantel shuffle so anchor and halves share the same null realisation.
+    # Pass only the feature columns so fullmantel doesn't accidentally treat a numeric
+    # cluster ID as a feature; reassign by .values to overwrite in place.
+    df_input = df.copy()
+    if shuffle:
+        from ...preprocessing.data_utils import fullmantel
+        feat_only = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
+        df_input[feat_only.columns] = fullmantel(feat_only).values
+
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+
+    rows = []
+    anchor_loadings_by_sample = {}
+
+    for sample in samples:
+        print(f"Running By-Component Split-Half: {sample}")
+
+        # Anchor PCA on this sample's full data (the whole dataset when group is None,
+        # or the sample's rows when iterating per group level).
+        if group:
+            sample_data = df_input[df_input[group] == sample].drop(
+                labels=drop_cols, axis=1, errors='ignore'
+            )
+        else:
+            sample_data = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
+
+        anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
+        anchor_pca.fit(sample_data)
+        anchor_loadings_by_sample[sample] = anchor_pca.loadings.copy()
+
+        boot_model = RHom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc,
+                          method=method, rotation=rotation, corr=corr,
+                          anchor=anchor_pca.loadings.to_numpy())
+
+        # engine.bypc=False so cv.redists is used (splithalf path); estimator.bypc=True
+        # plus the anchor makes hom_pairs / pro_cong / subspace_sim return per-component
+        # lists per replicate that we transpose at the bottom. engine.shuffle=False
+        # because we've already shuffled df_input once above.
+        boot_engine = BootstrapEngine(
+            estimator=boot_model,
+            cv=cv,
+            splithalf=True,
+            pro_cong=True,
+            shuffle=False,
+            subspace=subspace,
+            progress=progress,
+            progress_desc=f"Split-half bypc bootstrap ({sample})",
+        )
+
+        results = boot_engine(X=df_input, y=sample, group=group)
+        # results layout with estimator.bypc=True, engine.bypc=False:
+        #   results[0]: list-of-lists [n_replicates × npc]  -- |r| per component per replicate
+        #   results[1]: list-of-lists [n_replicates × npc]  -- TCC per component per replicate
+        #   results[2]: list-of-lists [n_replicates × npc]  -- subspace cosines (if subspace=True)
+        rhm_per_comp = list(map(list, zip(*results[0])))   # [npc × n_replicates]
+        phi_per_comp = list(map(list, zip(*results[1])))
+
+        # Subspace similarity is a whole-solution property -- collapse each replicate's
+        # per-direction cosines to one mean and broadcast across this sample's npc rows.
+        sub_per_sample = ([float(np.mean(s)) for s in results[2]] if subspace else None)
+
+        for idx in range(npc):
+            meta = ({group: sample} if group else {"Group": "fulldata"})
+            meta["comp"] = idx + 1
+            row = _build_row(boot_model.n_comp, rhm_per_comp[idx], phi_per_comp[idx],
+                             sub_data=sub_per_sample, metadata=meta)
+            rows.append(row)
+
+            if display:
+                _display_stats(f"Split-Half: {sample} - Component {idx + 1}", row)
+
+    splithalf_bypc_df = pd.DataFrame(rows)
+
+    if plot:
+        # Attach anchor loadings so plot_bypc can render wordclouds. When group is set
+        # each sample has its own anchor; we attach the first sample's by default --
+        # users can pass their own via plot_bypc(..., loadings=anchor_loadings_by_sample[<g>]).
+        first_sample = samples[0]
+        splithalf_bypc_df.attrs["loadings"] = anchor_loadings_by_sample[first_sample]
+
+        from ...visualization.rhomplots import plot_bypc
+        setupanalysis(path, file_prefix, includetime=False)
+        plt.close('all')
+
+        metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
+        for name in metrics:
+            fig = plot_bypc(splithalf_bypc_df, metric=name)
+            fig.savefig(
+                os.path.join(path, f"{file_prefix}/{file_prefix}_splithalf_bypc_{len(df_t.columns)}D_{npc}PC_{name}.png"),
+                bbox_inches="tight", dpi=150,
+            )
+            plt.show()
+            plt.close(fig)
+
+        # Persist the first sample's anchor loadings alongside the CSV
+        loadings_path = os.path.join(
+            path, f"{file_prefix}",
+            f"{file_prefix}_loadings_{len(df_t.columns)}D_{npc}PC.csv",
+        )
+        anchor_loadings_by_sample[first_sample].to_csv(loadings_path)
+
+    if save:
+        _export_report(splithalf_bypc_df, path, file_prefix,
+                       f"splithalf_bypc_{len(df_t.columns)}D_{npc}PC")
+
+    return splithalf_bypc_df

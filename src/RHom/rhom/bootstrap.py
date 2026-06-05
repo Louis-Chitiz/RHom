@@ -16,7 +16,9 @@ class BootstrapEngine:
             bypc: bool = False,
             shuffle: bool = False,
             subspace: bool = False,
-            fit_params: Optional[Dict[str, Any]] = None
+            fit_params: Optional[Dict[str, Any]] = None,
+            progress: bool = True,
+            progress_desc: Optional[str] = None,
         ) -> None:
             self.estimator = estimator
             self.cv = cv
@@ -27,6 +29,27 @@ class BootstrapEngine:
             self.shuffle = shuffle
             self.subspace = subspace
             self.fit_params = fit_params or {}
+            # Progress bar: lazy tqdm.auto wrapping of the inner split loop. Defaults
+            # to True since builtins enable it for user-visible feedback; set False to
+            # silence (e.g. when running headless or composing engines programmatically).
+            self.progress = progress
+            self.progress_desc = progress_desc
+
+    def _total_splits(self) -> int:
+        """
+        Expected number of (x1, x2) pairs the inner loop will iterate, given the
+        current cv mode. Used for the progress bar's denominator so it can report
+        proportion-complete; iteration still works correctly if the count is wrong.
+        """
+        if self.omnibus or self.splithalf:
+            return self.cv.n_redists
+        # `split` and `bypc_split` share the same fold-product shape.
+        k = self.cv.n_splits
+        if not self.cv.boot:
+            return k * k
+        # boot=True: sum_{r=1}^{k} C(k, r) = 2^k - 1 combinations on each side
+        n_combos = (2 ** k) - 1
+        return n_combos * n_combos
 
     def __call__(self, X: pd.DataFrame, y: Any, group: Optional[str] = None) -> Any:
         """Enables object instance to be called exactly like the original function."""
@@ -44,6 +67,16 @@ class BootstrapEngine:
             splits = self.cv.bypc_split(X, y)
         else:
             splits = self.cv.split(X, y)
+
+        # Optional progress bar over the inner split loop (lazy tqdm.auto import;
+        # no-ops gracefully if tqdm isn't installed).
+        if self.progress:
+            try:
+                from tqdm.auto import tqdm
+                splits = tqdm(splits, total=self._total_splits(),
+                              desc=self.progress_desc, leave=False)
+            except ImportError:
+                pass
 
         # Obtains scores and optional phi / subspace values for each split
         scores, phis, subs = [], [], []

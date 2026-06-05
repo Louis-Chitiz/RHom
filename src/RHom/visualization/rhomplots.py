@@ -485,6 +485,118 @@ def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = N
     fig.tight_layout(rect=[0, 0, 0.9, 0.96])
     return fig
 
+def plot_consensus_pca(stats: pd.DataFrame, font: str = "helvetica",
+                       title: str = None, pos_color: str = "#BB0000",
+                       neg_color: str = "#00156A"):
+    """
+    Per-PC grid: consensus wordcloud + horizontal bar plot of per-item loading
+    mean ± 95% bootstrap CI.
+
+    Each component gets a pair of axes:
+        * Wordcloud: consensus loadings for that PC, sized by ``|mean|`` and coloured
+          by sign (matching the package's wordcloud conventions).
+        * Bar plot: one horizontal bar per decomposed item, showing the bootstrap
+          mean and 95% CI for that item's loading on this PC. Bars are sorted by
+          signed mean (most positive on top, most negative on bottom) and coloured
+          to match the wordcloud (red for positive, blue for negative).
+
+    Parameters
+    ----------
+        stats : pd.DataFrame
+            Output of ``consensus_pca`` (one row per (item, comp) with ``mean``,
+            ``std``, ``LCI``, ``UCI`` columns and a wide-form ``consensus`` frame
+            attached via ``stats.attrs["consensus"]``).
+        font : str, default "helvetica"
+        title : str, optional
+            Figure-level title.
+        pos_color, neg_color : str
+            Hex colours for positive / negative loadings.
+
+    Returns
+    -------
+        matplotlib.figure.Figure
+    """
+    from .wordclouds import make_wordcloud
+
+    consensus = stats.attrs.get("consensus")
+    if consensus is None:
+        raise ValueError(
+            "Wide-form consensus loadings not found in stats.attrs['consensus']. "
+            "Pass the output of consensus_pca() directly so attrs are preserved."
+        )
+
+    items = list(consensus.index)
+    pcs = list(consensus.columns)
+    npc = len(pcs)
+
+    # Pair grid layout (matches plot_bypc): each PC occupies two columns
+    ncols_pairs = max(1, int(np.ceil(np.sqrt(npc))))
+    nrows_pairs = int(np.ceil(npc / ncols_pairs))
+    ncols = ncols_pairs * 2
+
+    pair_w = 5.0
+    pair_h = max(2.8, 0.28 * len(items) + 1.2)
+    fig, axes = plt.subplots(
+        nrows_pairs, ncols,
+        figsize=(pair_w * ncols_pairs, pair_h * nrows_pairs),
+        gridspec_kw={"width_ratios": [1, 1.3] * ncols_pairs},
+    )
+    axes = np.asarray(axes).reshape(nrows_pairs, ncols)
+
+    for k, pc in enumerate(pcs):
+        pr, pcol = divmod(k, ncols_pairs)
+        ax_wc = axes[pr, pcol * 2]
+        ax_bar = axes[pr, pcol * 2 + 1]
+
+        # --- Wordcloud panel ---
+        ax_wc.imshow(make_wordcloud(consensus[pc], font=font,
+                                     pos_color=pos_color, neg_color=neg_color),
+                     interpolation="bilinear")
+        ax_wc.set_title(pc, fontsize=12)
+        ax_wc.axis("off")
+
+        # --- Bar panel: per-item mean ± 95% CI ---
+        sub = stats[stats["comp"] == k + 1].set_index("item").loc[items]
+        means = sub["loading_x"].to_numpy()
+        lci = sub["loading_LCI"].to_numpy()
+        uci = sub["loading_UCI"].to_numpy()
+
+        # Sort by signed mean so the bars read top-to-bottom from most positive
+        # to most negative (after invert_yaxis), matching loading-table conventions.
+        order = np.argsort(means)[::-1]
+        items_sorted = [items[i] for i in order]
+        means_s = means[order]
+        lci_s = lci[order]
+        uci_s = uci[order]
+
+        # Asymmetric error bars; clip tiny negatives from percentile rounding
+        xerr = np.clip(np.vstack([means_s - lci_s, uci_s - means_s]), 0, None)
+
+        bar_colors = [pos_color if m >= 0 else neg_color for m in means_s]
+        pos = np.arange(len(items_sorted))
+        ax_bar.barh(pos, means_s, xerr=xerr, capsize=2,
+                    color=bar_colors, ecolor="0.3", edgecolor="white", linewidth=0.5)
+        ax_bar.axvline(0, color="0.3", linewidth=0.8, zorder=2)
+        ax_bar.set_yticks(pos)
+        ax_bar.set_yticklabels(items_sorted, fontsize=9)
+        ax_bar.set_xlabel("Loading", fontsize=10)
+
+        # Symmetric x-limits a little outside the widest CI for readability
+        max_extent = float(np.nanmax(np.abs(np.concatenate([lci_s, uci_s]))))
+        ax_bar.set_xlim(-max_extent * 1.1, max_extent * 1.1)
+
+    # Hide any unused panel slots when npc < ncols_pairs * nrows_pairs
+    for k in range(npc, ncols_pairs * nrows_pairs):
+        pr, pcol = divmod(k, ncols_pairs)
+        axes[pr, pcol * 2].axis("off")
+        axes[pr, pcol * 2 + 1].axis("off")
+
+    fig.suptitle(title if title is not None else "Consensus PCA: per-item loading (mean ± 95% CI)",
+                 fontsize=13)
+    fig.tight_layout(pad=0.6, w_pad=0.3, h_pad=0.6, rect=[0, 0, 1, 0.96])
+    return fig
+
+
 def plot_aligned_wordclouds(group_loadings: dict, anchor_loadings=None,
                             font: str = "helvetica", show_var: bool = True,
                             n_features: int = None, title: str = None):

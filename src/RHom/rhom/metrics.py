@@ -1,4 +1,4 @@
-from .._deps import pd, np, BaseEstimator, KFold, BaseCrossValidator, pearsonr
+from .._deps import pd, np, BaseEstimator, pearsonr
 from ..core.base_pca import basePCA
 
 from scipy.linalg import orthogonal_procrustes, subspace_angles
@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 from ..preprocessing.correlations import tcc
 
 
-class rhom(BaseEstimator):
+class RHom(BaseEstimator):
     """
     R-Homologue and Tucker's Congruence Coefficient
     -----------------------------------------------
@@ -82,6 +82,25 @@ class rhom(BaseEstimator):
             self.model_x = None
             self.model_x2 = None
         
+    @staticmethod
+    def align_to_anchor(loadings, anchor):
+        """
+        Procrustes-rotate a loading matrix into the anchor's frame.
+
+        Returns ``loadings @ R`` where ``R`` is the orthogonal rotation that
+        minimises ``||loadings @ R - anchor||_F``. Shared primitive used by the
+        anchor= branches of ``predict`` / ``pro_cong`` (when comparing two PCAs to
+        a shared frame) and by any outside caller that needs to align a single
+        per-iteration PCA to a reference (e.g. ``consensus_pca`` aligning each
+        bootstrap fit to the omnibus anchor, or the one-shot block in the example
+        script). Accepts and returns numpy arrays; DataFrame columns / indices
+        are the caller's responsibility.
+        """
+        L = loadings.values if hasattr(loadings, "values") else np.asarray(loadings)
+        A = anchor.values if hasattr(anchor, "values") else np.asarray(anchor)
+        R, _ = orthogonal_procrustes(L, A)
+        return L @ R
+
     def fit(self, X, y=None):
         """
         Fit the model to the provided data.

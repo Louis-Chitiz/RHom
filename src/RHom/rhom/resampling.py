@@ -24,6 +24,15 @@ class pair_cv():
             - The name of a level-2 / clustering column (e.g. participant ID). When set, whole clusters
               are kept together in every split, fold, and bootstrap draw so a unit never appears on both
               sides of a comparison. Prevents leakage and pseudoreplication with nested data.
+        - stratify: str, default=None
+            - Stratification: when set, half-construction (splithalf) and k-fold partitioning
+              (holdout) draw proportionally from each level of this column instead of from
+              the global pool. Composes with `cluster` -- stratification happens first, and
+              within each stratum clusters are kept intact.
+        - stratified_kfold: bool, default=False
+            - Toggle that lets holdout_split distinguish stratified k-fold from LOGO when
+              both `group` and folds are meaningful (the holdout_cv builtin sets stratify 
+              the user's group column and flips this flag on).
 
     Attributes
     ----------
@@ -38,6 +47,24 @@ class pair_cv():
         - assignModel(df, subrows):
             - Partitions rows of inputted dataset to standardized halves.
 
+        - target_mask(df, mask, target_val):
+            - Boolean row selector for the target subset, with branching logic for stratification and clustering.
+        
+        - stratified_target_mask(df):
+            - Boolean mask selecting half of each stratum's rows, with cluster-aware logic when `cluster` is set.
+
+        - cluster_partition(df, target_size):
+            - Helper for target_mask: picks whole clusters (shuffled) until at least `target_size` rows are gathered.
+
+        - to_features(data):
+            - Returns decomposition columns as a numpy array, dropping any group / cluster / stratify labels.
+
+        - make_folds(data):
+            - Partitions rows into `n_splits` folds, with cluster-aware logic when `cluster` is set.
+
+        - stratified_make_folds(data):
+            - K folds with proportional sampling from each stratum, with cluster-aware logic when `cluster` is set.
+
         - omni_prep(df, subrows):
             - Prepares data for omnibus-sample reproducibility by partitioning and standardizing.
 
@@ -49,6 +76,10 @@ class pair_cv():
 
         - bypc_split(X, y):
             - Used in by-component omnibus-sample reproducibility. Splits omnibus and sample sets into folds.
+
+        - holdout_split(X):
+            - Used in held-out cross-validation (i.e., LOGO, K-fold, stratified K-fold) reproducibility. 
+              Yields train/test splits based on grouping or stratification.
 
         - redists(df, subset):
             - Bootstrap resamples the split-half or omnibus-sample subdivisions of an inputted dataframe.
@@ -71,14 +102,7 @@ class pair_cv():
             self.omnibus = omnibus
             self.group = group
             self.cluster = cluster
-            # Stratification: when set, half-construction (splithalf) and k-fold partitioning
-            # (holdout) draw proportionally from each level of this column instead of from
-            # the global pool. Composes with `cluster` -- stratification happens first, and
-            # within each stratum clusters are kept intact.
             self.stratify = stratify
-            # Toggle that lets holdout_split distinguish stratified k-fold from LOGO when
-            # both `group` and folds are meaningful (the holdout_cv builtin sets stratify
-            # = the user's group column and flips this flag on).
             self.stratified_kfold = stratified_kfold
 
     @staticmethod
@@ -212,6 +236,39 @@ class pair_cv():
                 if len(sub) > 0:
                     folds[i].append(sub)
         return [np.concatenate(parts, axis=0) if parts else np.empty((0, 0)) for parts in folds]
+
+    def bootstrap_resamples(self, X: pd.DataFrame) -> Generator[pd.DataFrame, None, None]:
+        """
+        Yield ``self.n_redists`` bootstrap resamples of ``X``.
+
+        Mode toggle (uses the same ``cluster`` / ``stratify`` conventions as the rest
+        of ``pair_cv``):
+            * ``self.cluster`` set on X -- sample whole clusters with replacement so
+              level-2 unit structure is preserved (bootstrap over clusters, not rows).
+            * ``self.stratify`` set on X -- within each level of the stratifier,
+              resample rows with replacement; concatenate across levels so every
+              stratum keeps its original sample size.
+            * neither -- plain row-wise bootstrap with replacement.
+
+        Yields DataFrames (not numpy arrays) so feature-column metadata survives
+        for downstream PCA fits; group / cluster / stratify columns are NOT dropped
+        here -- the caller selects the decomposition columns from the result.
+        """
+        for _ in range(self.n_redists):
+            if self.cluster and self.cluster in X.columns:
+                clusters = X[self.cluster].unique()
+                chosen = np.random.choice(clusters, size=len(clusters), replace=True)
+                yield pd.concat([X[X[self.cluster] == c] for c in chosen])
+            elif self.stratify and self.stratify in X.columns:
+                chunks = []
+                for level in X[self.stratify].unique():
+                    level_rows = X[X[self.stratify] == level]
+                    idx = np.random.choice(level_rows.index, size=len(level_rows), replace=True)
+                    chunks.append(X.loc[idx])
+                yield pd.concat(chunks)
+            else:
+                idx = np.random.randint(0, len(X), size=len(X))
+                yield X.iloc[idx]
 
     def omni_prep(self, df: pd.DataFrame, subrows: Optional[Union[int, float]] = None) -> Dict[str, pd.DataFrame]:
         """
