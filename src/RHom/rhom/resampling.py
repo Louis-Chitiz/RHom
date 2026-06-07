@@ -356,8 +356,21 @@ class pair_cv():
                 f2 = np.concatenate([x2_c[v] for v in z[1]], axis=0)
                 yield f1, f2
 
-    def bypc_split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
-        """Generate indices to split data into referent and comparate sets based on grouping."""
+    def asym_split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+        """
+        Asymmetric split: X is taken whole on every iteration; y is partitioned into
+        ``n_splits`` folds and (under ``boot=True``) every non-empty combination of
+        those folds is iterated. Pairs of ``(X_whole, y_fold_combo)`` are yielded.
+
+        This is the resampling profile used by ``omsamp_bypc`` (where X is the
+        fixed omnibus side and y is the sample side being folded). It is decoupled
+        from the per-component output shape -- callers requesting per-component
+        scores should pass ``per_component=True`` to the engine, which works with
+        any resampling profile, not just this one. The name reflects the asymmetry
+        between the two sides (X-fixed vs y-folded), not the by-component output
+        that historically motivated it. ``bypc_split`` is kept as a back-compat
+        alias for one release.
+        """
         foldidx = list(range(self.n_splits))
         X_arr = self._to_features(X)
         x_c = self._make_folds(y)
@@ -369,10 +382,15 @@ class pair_cv():
             boot_combinations = []
             for z in range(1, self.n_splits + 1):
                 boot_combinations.extend(list(combinations(foldidx, r=z)))
-                
+
             boot_folds = list(product(boot_combinations, repeat=2))
             for fold_pair in boot_folds:
                 yield X_arr, np.concatenate([x_c[v] for v in fold_pair[1]], axis=0)
+
+    # Back-compat alias -- the method was named bypc_split historically because
+    # ``omsamp_bypc`` was the only analysis that used it. New code should call
+    # ``asym_split`` directly.
+    bypc_split = asym_split
 
     def holdout_split(self, X: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray, str], None, None]:
         """

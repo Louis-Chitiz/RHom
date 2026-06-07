@@ -115,7 +115,7 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     boot_engine = BootstrapEngine(
         estimator=boot_model,
         cv=cv,
-        omnibus=True,
+        mode="omnibus",
         pro_cong=True,
         shuffle=shuffle,
         subspace=subspace,
@@ -431,11 +431,15 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
     maindict = cv.omni_prep(df=df, subrows=nval)
     samples = df[group].unique()
 
-    # Initialize engine tailored for granular by-component splits
+    # Initialize engine tailored for granular by-component splits. The two flags are
+    # now independent: mode='asym' selects the asymmetric (X-fixed/y-folded) resampling
+    # via cv.asym_split, and per_component=True triggers the per-component transpose at
+    # the end. Previously a single bypc=True flag did both jobs.
     boot_engine = BootstrapEngine(
         estimator=boot_model,
         cv=cv,
-        bypc=True,
+        mode="asym",
+        per_component=True,
         pro_cong=True,
         shuffle=shuffle,
         subspace=subspace,

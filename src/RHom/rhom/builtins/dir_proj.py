@@ -284,12 +284,14 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
                       anchor=anchor_loadings)
     cv = pair_cv(boot=True, k=folds, cluster=cluster)
 
-    # engine.bypc stays False so cv.split is used (symmetric two-sided fold cross like
-    # dir_proj). estimator.bypc=True still makes hom_pairs / pro_cong / subspace_sim
-    # return per-component lists per replicate; we transpose at the bottom.
+    # mode=None means cv.split is used (symmetric two-sided fold cross like dir_proj).
+    # per_component=True makes the engine transpose the score / phi accumulators into
+    # [npc × n_replicates] lists at the end and collapse the per-direction subspace
+    # cosines to per-replicate means -- so we don't have to do that work here.
     boot_engine = BootstrapEngine(
         estimator=boot_model,
         cv=cv,
+        per_component=True,
         pro_cong=True,
         shuffle=shuffle,
         subspace=subspace,
@@ -305,17 +307,14 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
         _check_rank(maindict[comp].drop(labels=cl, axis=1))
 
         results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
-        # results layout with estimator.bypc=True, engine.bypc=False:
-        #   results[0]: list-of-lists [n_replicates × npc]  -- |r| per component per replicate
-        #   results[1]: list-of-lists [n_replicates × npc]  -- TCC per component per replicate
-        #   results[2]: list-of-lists [n_replicates × npc]  -- subspace cosines (if subspace=True)
+        # results layout with per_component=True (engine handles transpose + subspace collapse):
+        #   results[0]: list-of-lists [npc × n_replicates]  -- |r| per component per replicate
+        #   results[1]: list-of-lists [npc × n_replicates]  -- TCC per component per replicate
+        #   results[2]: list of floats  [n_replicates]      -- per-replicate mean subspace cosine
 
-        rhm_per_comp = list(map(list, zip(*results[0])))   # [npc × n_replicates]
-        phi_per_comp = list(map(list, zip(*results[1])))
-
-        # Subspace similarity is a whole-solution property -- collapse each replicate's
-        # per-direction cosines to one mean and broadcast across this pair's npc rows.
-        sub_per_pair = ([float(np.mean(s)) for s in results[2]] if subspace else None)
+        rhm_per_comp = results[0]
+        phi_per_comp = results[1]
+        sub_per_pair = results[2] if subspace else None
 
         for idx in range(npc):
             meta = {'referent': ref, 'comparator': comp, 'comp': idx + 1}

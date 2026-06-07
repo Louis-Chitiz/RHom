@@ -596,7 +596,6 @@ def plot_consensus_pca(stats: pd.DataFrame, font: str = "helvetica",
     fig.tight_layout(pad=0.6, w_pad=0.3, h_pad=0.6, rect=[0, 0, 1, 0.96])
     return fig
 
-
 def plot_aligned_wordclouds(group_loadings: dict, anchor_loadings=None,
                             font: str = "helvetica", show_var: bool = True,
                             n_features: int = None, title: str = None):

@@ -123,7 +123,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
     boot_engine = BootstrapEngine(
         estimator=boot_model,
         cv=cv,
-        splithalf=True,
+        mode="splithalf",
         pro_cong=True,
         shuffle=shuffle,
         subspace=subspace,
@@ -278,14 +278,16 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
                           method=method, rotation=rotation, corr=corr,
                           anchor=anchor_pca.loadings.to_numpy())
 
-        # engine.bypc=False so cv.redists is used (splithalf path); estimator.bypc=True
-        # plus the anchor makes hom_pairs / pro_cong / subspace_sim return per-component
-        # lists per replicate that we transpose at the bottom. engine.shuffle=False
-        # because we've already shuffled df_input once above.
+        # mode='splithalf' selects cv.redists (random-half resampling). per_component=True
+        # makes the engine transpose the score / phi accumulators into [npc × n_replicates]
+        # lists at the end and collapse the per-direction subspace cosines to per-replicate
+        # means -- so we don't have to do that work here. engine.shuffle=False because we've
+        # already shuffled df_input once above.
         boot_engine = BootstrapEngine(
             estimator=boot_model,
             cv=cv,
-            splithalf=True,
+            mode="splithalf",
+            per_component=True,
             pro_cong=True,
             shuffle=False,
             subspace=subspace,
@@ -294,16 +296,13 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
         )
 
         results = boot_engine(X=df_input, y=sample, group=group)
-        # results layout with estimator.bypc=True, engine.bypc=False:
-        #   results[0]: list-of-lists [n_replicates × npc]  -- |r| per component per replicate
-        #   results[1]: list-of-lists [n_replicates × npc]  -- TCC per component per replicate
-        #   results[2]: list-of-lists [n_replicates × npc]  -- subspace cosines (if subspace=True)
-        rhm_per_comp = list(map(list, zip(*results[0])))   # [npc × n_replicates]
-        phi_per_comp = list(map(list, zip(*results[1])))
-
-        # Subspace similarity is a whole-solution property -- collapse each replicate's
-        # per-direction cosines to one mean and broadcast across this sample's npc rows.
-        sub_per_sample = ([float(np.mean(s)) for s in results[2]] if subspace else None)
+        # results layout with per_component=True (engine handles transpose + subspace collapse):
+        #   results[0]: list-of-lists [npc × n_replicates]  -- |r| per component per replicate
+        #   results[1]: list-of-lists [npc × n_replicates]  -- TCC per component per replicate
+        #   results[2]: list of floats  [n_replicates]      -- per-replicate mean subspace cosine
+        rhm_per_comp = results[0]
+        phi_per_comp = results[1]
+        sub_per_sample = results[2] if subspace else None
 
         for idx in range(npc):
             meta = ({group: sample} if group else {"Group": "fulldata"})
