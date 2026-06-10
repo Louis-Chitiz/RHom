@@ -8,26 +8,27 @@ We are now ready to run your first RHom analysis!
     
 **3. Type the following and save the file:**
 
-In the example pasted below, change the file path to your own csv file stored in your own data directory or alternatively, use the URL method pasted below to use the example data available on RHom.
+In the example pasted below, change the file path to your own csv file stored in your own data directory or alternatively, use the example dataset (`example_data.csv`, in the repository root) to follow along.
 
-Using URL method to read in example data (experience sampling data from lab and daily life in Canada): 
+Using the example data:
 
 ```python
-import pandas as pd # for reading in the csv file containg the data
+import pandas as pd # for reading in the csv file containing the data
 from RHom import basePCA # this imports the basePCA class from RHom
 
 # read in data
-df = pd.read_csv(data/example_data.csv)
+df = pd.read_csv("example_data.csv")
 
 # sets up PCA object, asking for 4 components with varimax rotation
-model = basePCA(n_components=4,rotation="varimax")
+# verbosity=1 prints the explained variance and top-loading items as it fits
+model = basePCA(n_components=4, rotation="varimax", verbosity=1)
 
 # train PCA on data and transform data to create PCA scores
-# pca_scores now contains dataframe with original data plus PCA columns
+# pca_scores now contains a dataframe with your metadata columns plus PCA columns
 pca_scores = model.fit_transform(df)
 
 # save results to results folder using .save
-model.save(path="results",pathprefix="PCA_results")
+model.save(path="results", pathprefix="PCA_results")
 ```
 
 Using your own data:
@@ -44,14 +45,14 @@ from RHom import basePCA # to use RHom
 df = pd.read_csv("data/lockdown_data.csv")
 
 # sets up PCA object, asking for 4 components with varimax rotation
-model = basePCA(n_components=4,rotation="varimax")
+model = basePCA(n_components=4, rotation="varimax", verbosity=1)
 
 # train PCA on data and transform data to create PCA scores
-# pca_scores now contains dataframe with original data plus PCA columns
+# pca_scores now contains a dataframe with your metadata columns plus PCA columns
 pca_scores = model.fit_transform(df)
 
 # save results to results folder using .save
-model.save(path="results",pathprefix="PCA_results")
+model.save(path="results", pathprefix="PCA_results")
 ```
 
 **4. Before running this file, select the conda environment you have created which has RHom installed in.**
@@ -77,31 +78,29 @@ The print out in the terminal will tell you about the KMO and Bartlett's Test of
 
 **7. Check your results!**
 
-They will be stored in your results folder.
+They will be stored in your results folder, inside a subfolder named after the `pathprefix` you chose plus the date (e.g. `results/PCA_results_10062026/`).
 
-In the results folder, there will be the following sub-directories:
-    - csvdata
-    - descriptives
-    - screeplots
-    - wordclouds
+Within that folder there are three sub-directories:
+- `csvdata`
+- `statistics`
+- `wordclouds`
 
-In the csvdata directory, you will find:
+In the `csvdata` directory, you will find:
 
-- pca_loadings.csv: rows = experience sampling items, columns = pca components, values = component loadings
-- fitted_pca_scores.csv: data PCA was trained on + PCA scores
-- projected_pca_scores.csv: data PCA was applied to + PCA scores
-- full_pca_scores.csv: data PCA was trained on plus data PCA was applied to + PCA scores
-- pca_scores_original_format.csv: original dataframe PCA was trained on (including string columns not included in PCA) + PCA scores
+- `loadings.csv`: rows = experience sampling items, columns = PCA components, values = component loadings
+- `eigenvalues.csv`: the eigenvalue (variance) of each retained component
+- `variance_stats.csv`: explained-variance summary (per component and cumulative)
+- `fitted_results.csv`: the data the PCA was trained on (metadata columns) + PCA scores
+- `projected_results.csv`: the data the PCA was applied to + PCA scores (only written if you called `transform` / `fit_transform`)
+- `original_data.csv`: the original dataframe the PCA was trained on, including any string columns that were not included in the PCA
 
-If you have trained the PCA data on the same data you apply the PCA to, fitted_pca_scores, projected_pca_scores, and full_pca_scores will all be identical.
-    
-If you train the PCA on different data to the one you apply the PCA to, 'fitted' will contain data that the PCA was trained on, 'projected' will contain data that the PCA was applied to, and 'full' will contain both datasets.
-    
-In the descriptives directory are bar graphs showing the average responses to each experience sampling item, separated in the same way as the csv files described above.
-    
-The screeplot directory contains scree plots showing the 1) eigenvalues of each PCA component and 2) the explained variance of each component.
-    
-Finally, the wordclouds directory contains png images of wordclouds representing each of the PCA components identified.
+If you trained and applied the PCA on the same data, `fitted_results` and `projected_results` will be identical. If you trained on one dataset and applied it to another, `fitted_results` holds the training data and `projected_results` holds the data you projected.
+
+The `statistics` directory contains:
+- `scree_eigens.png` and `scree_expvar.png`: scree plots of 1) the eigenvalues of each component and 2) the explained variance of each component.
+- `fitted_means.png` (and `projected_means.png` if you projected new data): bar graphs of the average response to each experience sampling item.
+
+Finally, the `wordclouds` directory contains png images of wordclouds representing each of the PCA components identified.
     
 - They are first named numerically (e.g., PC1).
 - The three terms are the terms with the highest loading, separated by direction of loading:
