@@ -137,8 +137,8 @@ dir_proj(
     file_prefix="tour_dirproj",
 )
 
-# By-component version: a grid of per-component pairwise heatmaps, so you can see
-# (say) that PC1 reproduces everywhere but PC4 only between two studies.
+# By-component version: a grid of per-component pairwise heatmaps, so you can see, say,
+# that PC1 reproduces everywhere but PC4 only between two studies.
 dir_proj_bypc(
     df=data, group=GROUP_COL, npc=NPC, method=METHOD, corr=CORR, rotation=ROTATION,
     cluster=CLUSTER_COL, folds=FOLDS,
