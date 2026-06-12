@@ -22,10 +22,10 @@ In order to be able to use RHom within your own GitHub analysis repository, ther
 conda create -n <name_of_environment> python=3.8.13
 ```
 
-- Example with 'covid' as name:
+- Example with 'myenv' as name:
 
 ```
-conda create -n covid python=3.8.13
+conda create -n myenv python=3.8.13
 ```
     
 - When you run this command, you are using Conda, a popular package and environment management system in Python, to create a new virtual environment with a specific Python version.
@@ -52,10 +52,10 @@ But now you need to 'activate' it in order to install RHom.
 conda activate <name_of_environment>
 ```
 
-- Example with 'covid' as name:
+- Example with 'myenv' as name:
 
 ```
-conda activate covid
+conda activate myenv
 ```
 
 **4. Navigate to RHom directory**
@@ -78,8 +78,8 @@ We are now in a position where 1) the anaconda environment has been created and 
 In order to install RHom into this activated environment, type the following into your command prompt and press enter:
 
 ```
-pip install .
+pip install e
 ```
 
 
-You have now installed ThougthSpace inside the anaconda environment you created.
+You have now installed RHom inside the anaconda environment you created.
