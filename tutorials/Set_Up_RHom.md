@@ -78,7 +78,7 @@ We are now in a position where 1) the anaconda environment has been created and 
 In order to install RHom into this activated environment, type the following into your command prompt and press enter:
 
 ```
-pip install .
+pip install -e
 ```
 
 
