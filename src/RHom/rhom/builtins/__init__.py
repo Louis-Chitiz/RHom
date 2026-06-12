@@ -20,7 +20,7 @@ the analysis modules; they are not re-exported here (private to the package).
 from .splithalf import splithalf, splithalf_bypc
 from .dir_proj import dir_proj, dir_proj_bypc
 from .omni import omni_sample, omsamp_bypc, omni_variance
-from .holdout import holdout_cv
+from .holdout import holdout_cv, holdout_bypc
 from .consensus import consensus_pca
 
 __all__ = [
@@ -32,5 +32,6 @@ __all__ = [
     "omsamp_bypc",
     "omni_variance",
     "holdout_cv",
+    "holdout_bypc",
     "consensus_pca",
 ]
