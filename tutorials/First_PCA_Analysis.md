@@ -42,7 +42,7 @@ import pandas as pd # for reading in your csv
 from RHom import basePCA # to use RHom
 
 # read in data
-df = pd.read_csv("data/lockdown_data.csv")
+df = pd.read_csv("data/example_data.csv")
 
 # sets up PCA object, asking for 4 components with varimax rotation
 model = basePCA(n_components=4, rotation="varimax", verbosity=1)
