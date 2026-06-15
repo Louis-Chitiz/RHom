@@ -24,7 +24,7 @@ Map of the tour:
     2. Reliability (one sample)        splithalf / splithalf_bypc
     3. Reproducibility across groups   dir_proj / dir_proj_bypc
     4. Blending sources together       omni_sample / omsamp_bypc / omni_variance
-    5. Out-of-sample generalization    holdout_cv
+    5. Out-of-sample generalization    holdout_cv / holdout_bypc
     6. One consensus solution          consensus_pca
     7. The null baseline               shuffle=True
     8. Re-plotting saved results
@@ -46,7 +46,7 @@ from RHom import (
     splithalf, splithalf_bypc,
     dir_proj, dir_proj_bypc,
     omni_sample, omsamp_bypc, omni_variance,
-    holdout_cv,
+    holdout_cv, holdout_bypc,
     consensus_pca,
 )
 
@@ -185,6 +185,8 @@ omni_variance(
 #   folds= only          -> random K-fold (cluster-aware via cluster=)
 #   group= AND folds=    -> stratified K-fold (every fold contains every source)
 #
+#   boot= (+ optional folds=/groups= AND folds=)   -> bootstrap K-fold/stratified K-fold
+#
 # Leave-one-source-out — the strongest "does this generalize to a new study?" test:
 holdout_cv(
     df=data, group=GROUP_COL, npc=NPC, method=METHOD, corr=CORR, rotation=ROTATION,
@@ -197,6 +199,13 @@ holdout_cv(
     df=data, group=GROUP_COL, folds=FOLDS, npc=NPC,
     method=METHOD, corr=CORR, rotation=ROTATION, cluster=CLUSTER_COL,
     file_prefix="tour_holdout_strat",
+)
+
+# Per-component view of the stratified 5-fold.
+holdout_bypc(
+    df=data, group=GROUP_COL, folds=FOLDS, npc=NPC,
+    method=METHOD, corr=CORR, rotation=ROTATION, cluster=CLUSTER_COL,
+    file_prefix="tour_holdout_strat"
 )
 
 

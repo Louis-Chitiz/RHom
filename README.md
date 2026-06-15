@@ -78,7 +78,7 @@ The rhom module provides a family of analyses that assess component reliability,
 - [Omnibus-Sample Reproducibility](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/omni-sample.md) — `omni_sample` (and `omsamp_bypc`); `omni_variance` reports how much of each group's variance a pooled solution captures.
 
 *Do my components generalize to held-out data?*
-- `holdout_cv` — cross-validated reproducibility with leave-one-group-out, random K-fold, or stratified K-fold splits.
+- `holdout_cv` (and `holdout_bypc`) — cross-validated reproducibility with leave-one-group-out, random K-fold, or stratified K-fold splits.
 
 *What single set of loadings should I report?*
 - `consensus_pca` — aggregates many resampled or out-of-sample PCAs into one consensus solution, with a 95% confidence interval on every loading.
