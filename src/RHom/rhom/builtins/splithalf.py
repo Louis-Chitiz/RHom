@@ -12,6 +12,7 @@ import copy
 
 from ...core.base_pca import basePCA
 from ...preprocessing.preliminary import _check_rank
+from ...preprocessing.data_utils import group_standardize
 from ...io.save import setupanalysis
 
 from ..metrics import RHom
@@ -23,7 +24,7 @@ from ._reporting import _build_row, _display_stats, _export_report
 
 def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
               boot=1000, save=True, display=False, shuffle=False, cluster=None, stratify=None,
-              subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+              groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
     ----------------------
@@ -111,14 +112,20 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
             "from each level across whole-dataset halves), not both."
         )
 
-    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    drop_cols = [c for c in (group, cluster, stratify, groupby) if c is not None]
     df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
     samples = df[group].unique() if group else ['fulldata']
     _check_rank(df_t)
 
-    boot_model = RHom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+    # R-homologue projection target. With groupby set, the components live in the
+    # within-group-standardized space, so the common projection target must be too;
+    # using the full data's per-group means here is a fixed symmetric transform (the
+    # same for both halves), not a per-split estimate, so it introduces no leakage.
+    rd_src = (group_standardize(df, groupby, feature_cols=list(df_t.columns))[list(df_t.columns)].values
+              if groupby else df_t.values)
+    boot_model = RHom(rd=copy.deepcopy(rd_src), n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot, groupby=groupby)
 
     boot_engine = BootstrapEngine(
         estimator=boot_model,
@@ -154,7 +161,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
 
 def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
                    boot=1000, save=True, plot=True, display=False, shuffle=False, cluster=None,
-                   stratify=None, subspace=False, progress=True,
+                   stratify=None, groupby=None, subspace=False, progress=True,
                    path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability: By-Component
@@ -239,7 +246,7 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
             "from each level across whole-dataset halves), not both."
         )
 
-    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    drop_cols = [c for c in (group, cluster, stratify, groupby) if c is not None]
     df_t = df.drop(labels=drop_cols, axis=1) if drop_cols else df
     samples = df[group].unique() if group else ['fulldata']
     _check_rank(df_t)
@@ -253,7 +260,13 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
         feat_only = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
         df_input[feat_only.columns] = fullmantel(feat_only).values
 
-    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot)
+    # R-homologue projection target, group-standardized (full data) under groupby so it
+    # matches the within-group-standardized component space (see splithalf for rationale).
+    feat_cols = list(df_t.columns)
+    rd_src = (group_standardize(df_input, groupby, feature_cols=feat_cols)[feat_cols].values
+              if groupby else df_input[feat_cols].values)
+
+    cv = pair_cv(group=group, cluster=cluster, stratify=stratify, n=boot, groupby=groupby)
 
     rows = []
     anchor_loadings_by_sample = {}
@@ -262,19 +275,20 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
         print(f"Running By-Component Split-Half: {sample}")
 
         # Anchor PCA on this sample's full data (the whole dataset when group is None,
-        # or the sample's rows when iterating per group level).
-        if group:
-            sample_data = df_input[df_input[group] == sample].drop(
-                labels=drop_cols, axis=1, errors='ignore'
-            )
+        # or the sample's rows when iterating per group level). With groupby set, the
+        # anchor is itself a grouped solution: standardize within groupby first, then
+        # decompose (basePCA's global scaling is then an identity).
+        sample_src = df_input[df_input[group] == sample] if group else df_input
+        if groupby:
+            sample_data = group_standardize(sample_src, groupby, feature_cols=feat_cols)[feat_cols]
         else:
-            sample_data = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
+            sample_data = sample_src.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else sample_src
 
         anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
         anchor_pca.fit(sample_data)
         anchor_loadings_by_sample[sample] = anchor_pca.loadings.copy()
 
-        boot_model = RHom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc,
+        boot_model = RHom(rd=copy.deepcopy(rd_src), bypc=True, n_comp=npc,
                           method=method, rotation=rotation, corr=corr,
                           anchor=anchor_pca.loadings.to_numpy())
 

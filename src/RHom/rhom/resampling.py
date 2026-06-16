@@ -2,6 +2,8 @@ from .._deps import pd, np, StandardScaler
 from typing import Dict, List, Tuple, Generator, Optional, Union
 from itertools import combinations, product
 
+from ..preprocessing.data_utils import group_standardize
+
 class pair_cv():
     """
     Resampling Methods for Bootstrapping Component Reproducibility Analysis
@@ -31,8 +33,15 @@ class pair_cv():
               within each stratum clusters are kept intact.
         - stratified_kfold: bool, default=False
             - Toggle that lets holdout_split distinguish stratified k-fold from LOGO when
-              both `group` and folds are meaningful (the holdout_cv builtin sets stratify 
+              both `group` and folds are meaningful (the holdout_cv builtin sets stratify
               the user's group column and flips this flag on).
+        - groupby: str, default=None
+            - Optional nuisance-grouping column for groupedPCA-style decomposition. When
+              set, every materialized decomposition subset (half, fold, sample, omnibus)
+              is z-scored *within each level of this column on its own rows* before the
+              labels are stripped, so each resample reproduces groupedPCA's within-group
+              standardization with no leakage across the split. Independent of `group`
+              (the comparison/iteration variable), `stratify`, and `cluster`.
 
     Attributes
     ----------
@@ -95,6 +104,7 @@ class pair_cv():
             cluster: Optional[str] = None,
             stratify: Optional[str] = None,
             stratified_kfold: bool = False,
+            groupby: Optional[str] = None,
         ) -> None:
             self.n_splits = k
             self.n_redists = n
@@ -104,6 +114,7 @@ class pair_cv():
             self.cluster = cluster
             self.stratify = stratify
             self.stratified_kfold = stratified_kfold
+            self.groupby = groupby
 
     @staticmethod
     def standardize(df: pd.DataFrame) -> pd.DataFrame:
@@ -123,6 +134,16 @@ class pair_cv():
         is_target = self._target_mask(df, mask, target_val)
 
         drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in df.columns]
+
+        if self.groupby and self.groupby in df.columns:
+            # Within-group standardize each half on its own rows (groupedPCA per
+            # resample), then drop labels incl. groupby. Returned as DataFrames so
+            # callers like omni_prep_mini can still concatenate before a final pass.
+            gb_drop = drop + ([self.groupby] if self.groupby not in drop else [])
+            half1 = group_standardize(df[is_target], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
+            half2 = group_standardize(df[~is_target], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
+            return half1, half2
+
         half1 = df[is_target].drop(labels=drop, axis=1, errors='ignore')
         half2 = df[~is_target].drop(labels=drop, axis=1, errors='ignore')
 
@@ -190,52 +211,84 @@ class pair_cv():
         return np.concatenate(chosen) if chosen else np.asarray([])
 
     def _to_features(self, data: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
-        """Return decomposition columns as a numpy array, dropping any group / cluster / stratify labels."""
+        """Return decomposition columns as a numpy array, dropping any group / cluster / stratify / groupby labels."""
         if hasattr(data, 'columns'):
-            drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in data.columns]
+            drop = [c for c in (self.group, self.cluster, self.stratify, self.groupby) if c and c in data.columns]
             data = data.drop(labels=drop, axis=1) if drop else data
             return np.array(data.values, copy=True)
         return np.array(data, copy=True)
 
-    def _make_folds(self, data: Union[pd.DataFrame, np.ndarray]) -> List[np.ndarray]:
+    def _prep(self, data: Union[pd.DataFrame, np.ndarray], global_std: bool) -> np.ndarray:
         """
-        Partition rows into `n_splits` folds.
+        Materialize a decomposition-ready feature array from a labeled row subset.
 
-        With `cluster` set (and present on a DataFrame), whole level-2 units are assigned
-        to folds so a cluster never spans two folds (requires at least `n_splits` distinct
-        clusters). Otherwise rows are shuffled and split directly.
+        This is the single chokepoint every resampling method routes its final
+        decomposition units through, so groupedPCA support lives in one place:
+
+            * ``self.groupby`` set -- z-score features *within each group* on this
+              subset's own rows (leakage-free per-resample groupedPCA standardization).
+              basePCA's later global scaling is then an exact identity, so the grouped
+              solution falls out of the unchanged pipeline.
+            * otherwise -- historical behaviour: global z-scoring when ``global_std``
+              (the splithalf / omnibus regime, where the resampler standardized) or raw
+              features otherwise (the fold regime, where basePCA does the scaling).
+
+        All label columns are stripped from the result either way.
         """
-        if self.cluster and hasattr(data, 'columns') and self.cluster in data.columns:
+        if self.groupby and hasattr(data, "columns") and self.groupby in data.columns:
+            return self._to_features(group_standardize(data, self.groupby))
+
+        feats = self._to_features(data)
+        if global_std:
+            return self.standardize(pd.DataFrame(feats)).to_numpy()
+        return feats
+
+    def _make_folds(self, data: Union[pd.DataFrame, np.ndarray]) -> List[pd.DataFrame]:
+        """
+        Partition rows into `n_splits` folds, returned as labeled DataFrame subsets.
+
+        With `cluster` set, whole level-2 units are assigned to folds so a cluster never
+        spans two folds (requires at least `n_splits` distinct clusters). Otherwise rows
+        are shuffled and split directly.
+
+        Standardization is *deferred*: folds keep their label columns and raw values, and
+        the callers route each assembled decomposition unit (a single fold, a multi-fold
+        train set, a stratified fold) through ``_prep``. This way a train set or a
+        stratified fold is standardized as a whole rather than per sub-fold -- essential
+        for leakage-free per-resample group standardization.
+        """
+        if not hasattr(data, 'columns'):
+            data = pd.DataFrame(data)
+
+        if self.cluster and self.cluster in data.columns:
             clusters = data[self.cluster].unique().copy()
             np.random.shuffle(clusters)
-            labels = data[self.cluster].values
-            feat = self._to_features(data)
-            return [feat[np.isin(labels, fold)] for fold in np.array_split(clusters, self.n_splits)]
+            return [data[data[self.cluster].isin(fold)] for fold in np.array_split(clusters, self.n_splits)]
 
-        arr = self._to_features(data)
-        np.random.shuffle(arr)
-        return np.array_split(arr, self.n_splits)
+        # Positional shuffle keeps this robust to duplicate index labels.
+        pos = np.arange(len(data))
+        np.random.shuffle(pos)
+        return [data.iloc[chunk] for chunk in np.array_split(pos, self.n_splits)]
 
-    def _stratified_make_folds(self, data: pd.DataFrame) -> List[np.ndarray]:
+    def _stratified_make_folds(self, data: pd.DataFrame) -> List[pd.DataFrame]:
         """
         K folds with proportional sampling from each stratum.
 
         For each level of ``self.stratify`` the rows are partitioned into ``n_splits``
-        folds via ``_make_folds`` (which is cluster-aware when ``self.cluster`` is set),
-        and the i-th fold is the concatenation of the i-th sub-fold from every stratum.
-        Returns a list of feature arrays (group / cluster / stratify columns stripped
-        by ``_to_features`` inside ``_make_folds``).
+        folds via ``_make_folds`` (cluster-aware when ``self.cluster`` is set), and the
+        i-th fold is the concatenation of the i-th sub-fold from every stratum. Returns
+        labeled DataFrame folds (standardization deferred to the caller's ``_prep``).
         """
         if not (self.stratify and self.stratify in data.columns):
             raise ValueError("stratified_make_folds requires self.stratify to be set and present in data.")
 
-        folds: List[List[np.ndarray]] = [[] for _ in range(self.n_splits)]
+        folds: List[List[pd.DataFrame]] = [[] for _ in range(self.n_splits)]
         for level in data[self.stratify].unique():
             level_data = data[data[self.stratify] == level]
             for i, sub in enumerate(self._make_folds(level_data)):
                 if len(sub) > 0:
                     folds[i].append(sub)
-        return [np.concatenate(parts, axis=0) if parts else np.empty((0, 0)) for parts in folds]
+        return [pd.concat(parts, axis=0) if parts else data.iloc[:0] for parts in folds]
 
     def bootstrap_resamples(self, X: pd.DataFrame) -> Generator[pd.DataFrame, None, None]:
         """
@@ -302,7 +355,10 @@ class pair_cv():
             omni_drop = [c for c in (self.group, self.cluster) if c and c in subsamp_df.columns]
             omnibus_chunks.append(subsamp_df[~is_sample].drop(labels=omni_drop, axis=1, errors='ignore'))
 
-        models["omnibus"] = self.standardize(pd.concat(omnibus_chunks, axis=0))
+        # The omnibus is a single fixed reference set, so standardize it as one unit
+        # (within-group when groupby is set, else global). omni_drop above keeps the
+        # groupby column on each chunk so _prep can see it here.
+        models["omnibus"] = self._prep(pd.concat(omnibus_chunks, axis=0), global_std=True)
         return models
 
     def omni_prep_mini(
@@ -344,17 +400,18 @@ class pair_cv():
 
         if not self.boot:
             for fold in product(foldidx, repeat=2):
-                yield x1_c[fold[0]], x2_c[fold[1]]
+                yield (self._prep(x1_c[fold[0]], global_std=False),
+                       self._prep(x2_c[fold[1]], global_std=False))
         else:
             boot_combinations = []
             for z in range(1, self.n_splits + 1):
                 boot_combinations.extend(list(combinations(foldidx, r=z)))
-                
+
             boot_folds = list(product(boot_combinations, repeat=2))
             for z in boot_folds:
-                f1 = np.concatenate([x1_c[v] for v in z[0]], axis=0)
-                f2 = np.concatenate([x2_c[v] for v in z[1]], axis=0)
-                yield f1, f2
+                f1 = pd.concat([x1_c[v] for v in z[0]], axis=0)
+                f2 = pd.concat([x2_c[v] for v in z[1]], axis=0)
+                yield self._prep(f1, global_std=False), self._prep(f2, global_std=False)
 
     def asym_split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         """
@@ -372,12 +429,14 @@ class pair_cv():
         alias for one release.
         """
         foldidx = list(range(self.n_splits))
-        X_arr = self._to_features(X)
+        # X is the fixed side, taken whole; prep it once. (Under groupby it is
+        # standardized as a single unit -- it is the reference, not a resample.)
+        X_arr = self._prep(X, global_std=False)
         x_c = self._make_folds(y)
 
         if not self.boot:
             for z in product(foldidx, repeat=2):
-                yield X_arr, x_c[z[1]]
+                yield X_arr, self._prep(x_c[z[1]], global_std=False)
         else:
             boot_combinations = []
             for z in range(1, self.n_splits + 1):
@@ -385,7 +444,7 @@ class pair_cv():
 
             boot_folds = list(product(boot_combinations, repeat=2))
             for fold_pair in boot_folds:
-                yield X_arr, np.concatenate([x_c[v] for v in fold_pair[1]], axis=0)
+                yield X_arr, self._prep(pd.concat([x_c[v] for v in fold_pair[1]], axis=0), global_std=False)
 
     # Back-compat alias -- the method was named bypc_split historically because
     # ``omsamp_bypc`` was the only analysis that used it. New code should call
@@ -417,24 +476,24 @@ class pair_cv():
             folds = self._stratified_make_folds(X)
             nf = len(folds)
             for i in range(nf):
-                train = np.concatenate([folds[j] for j in range(nf) if j != i], axis=0)
-                yield train, folds[i], f"fold{i + 1}"
+                train = pd.concat([folds[j] for j in range(nf) if j != i], axis=0)
+                yield (self._prep(train, global_std=False),
+                       self._prep(folds[i], global_std=False), f"fold{i + 1}")
             return
 
         if self.group is not None and hasattr(X, "columns") and self.group in X.columns:
-            drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in X.columns]
             for g in X[self.group].unique():
                 is_test = X[self.group] == g
-                train = X[~is_test].drop(labels=drop, axis=1, errors='ignore').values
-                test = X[is_test].drop(labels=drop, axis=1, errors='ignore').values
-                yield train, test, str(g)
+                yield (self._prep(X[~is_test], global_std=False),
+                       self._prep(X[is_test], global_std=False), str(g))
             return
 
         folds = self._make_folds(X)
         nf = len(folds)
         for i in range(nf):
-            train = np.concatenate([folds[j] for j in range(nf) if j != i], axis=0)
-            yield train, folds[i], f"fold{i + 1}"
+            train = pd.concat([folds[j] for j in range(nf) if j != i], axis=0)
+            yield (self._prep(train, global_std=False),
+                   self._prep(folds[i], global_std=False), f"fold{i + 1}")
 
     def redists(self, df: pd.DataFrame, subset: Optional[str] = None) -> Generator[List[pd.DataFrame], None, None]:
         """
@@ -461,13 +520,16 @@ class pair_cv():
                 
         else:
             splitdf = df[df[self.group] == subset].drop(labels=self.group, axis=1) if (self.group is not None and subset is not None) else df.copy()
-            
+
             rows = splitdf.shape[0]
             mask = np.full(rows, 2)
             mask[:int(rows / 2)] = 1
 
             for _ in range(self.n_redists):
-                # Reuses the exact same partition engine for split-half analyses
-                h1, h2 = self._assign_model(splitdf, mask, 1)
-                yield [h1, h2]
+                # Same partition engine as _assign_model, but each half is routed through
+                # _prep so it is the final decomposition unit (global-standardized, or
+                # within-group standardized when groupby is set).
+                is_target = self._target_mask(splitdf, mask, 1)
+                yield [self._prep(splitdf[is_target], global_std=True),
+                       self._prep(splitdf[~is_target], global_std=True)]
     

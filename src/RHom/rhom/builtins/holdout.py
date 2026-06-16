@@ -24,6 +24,7 @@ import copy
 
 from ...core.base_pca import basePCA
 from ...preprocessing.preliminary import _check_rank
+from ...preprocessing.data_utils import group_standardize
 from ...io.save import setupanalysis
 
 from ..metrics import RHom
@@ -32,7 +33,7 @@ from ..resampling import pair_cv
 from ._reporting import _build_row, _display_stats, _export_report, _progress_wrap
 
 
-def _make_holdout_cv(group, folds, cluster):
+def _make_holdout_cv(group, folds, cluster, groupby=None):
     """
     Build the ``pair_cv`` splitter and a human-readable mode label for the three
     held-out modes, selected by which of ``group`` / ``folds`` are passed:
@@ -40,15 +41,18 @@ def _make_holdout_cv(group, folds, cluster):
         * ``group`` and ``folds``  -> stratified K-fold by ``group``
         * ``group`` only           -> leave-one-group-out
         * ``folds`` only           -> random K-fold (cluster-aware via ``cluster``)
+
+    ``groupby`` (optional) is threaded through unchanged so each fold is
+    standardized within that nuisance grouping (groupedPCA semantics per fold).
     """
     if group is not None and folds is not None:
-        cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True)
+        cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True, groupby=groupby)
         mode = f"{folds}-fold stratified by '{group}'"
     elif group is not None:
-        cv = pair_cv(group=group, cluster=cluster)
+        cv = pair_cv(group=group, cluster=cluster, groupby=groupby)
         mode = f"leave-one-group-out by '{group}'"
     else:
-        cv = pair_cv(k=folds, cluster=cluster)
+        cv = pair_cv(k=folds, cluster=cluster, groupby=groupby)
         mode = f"{folds}-fold"
     return cv, mode
 
@@ -128,7 +132,7 @@ def _holdout_blocks(cv, df_input, boot_model, subspace, boot, total_folds, mode,
 
 
 def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd',
-               rotation='varimax', corr='pearson', cluster=None, save=True, plot=True,
+               rotation='varimax', corr='pearson', cluster=None, groupby=None, save=True, plot=True,
                display=False, shuffle=False, subspace=False, progress=True,
                path='results', file_prefix=randint(10000, 99999)):
     """
@@ -237,7 +241,7 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
             "has a deterministic split with nothing to resample."
         )
 
-    drop_cols = [c for c in (group, cluster) if c is not None]
+    drop_cols = [c for c in (group, cluster, groupby) if c is not None]
     feat_cols = df.columns.drop(drop_cols) if drop_cols else df.columns
     _check_rank(df[feat_cols])
 
@@ -250,8 +254,12 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
         from ...preprocessing.data_utils import fullmantel
         df_input[feat_cols] = fullmantel(df_input[feat_cols]).values
 
-    cv, mode = _make_holdout_cv(group, folds, cluster)
-    boot_model = RHom(rd=copy.deepcopy(df_input[feat_cols].values), n_comp=npc,
+    cv, mode = _make_holdout_cv(group, folds, cluster, groupby=groupby)
+    # R-homologue projection target: group-standardized (full data) under groupby so it
+    # matches the within-group component space (see splithalf for rationale).
+    rd_src = (group_standardize(df_input, groupby, feature_cols=list(feat_cols))[list(feat_cols)].values
+              if groupby else df_input[feat_cols].values)
+    boot_model = RHom(rd=copy.deepcopy(rd_src), n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
 
     # Total folds: K for k-fold modes (random or stratified), G for LOGO.
@@ -329,7 +337,7 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
 
 
 def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='svd',
-                 rotation='varimax', corr='pearson', cluster=None, save=True, plot=True,
+                 rotation='varimax', corr='pearson', cluster=None, groupby=None, save=True, plot=True,
                  display=False, shuffle=False, subspace=False, progress=True,
                  path='results', file_prefix=randint(10000, 99999)):
     """
@@ -389,7 +397,7 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
             "has a deterministic split with nothing to resample."
         )
 
-    drop_cols = [c for c in (group, cluster) if c is not None]
+    drop_cols = [c for c in (group, cluster, groupby) if c is not None]
     feat_cols = df.columns.drop(drop_cols) if drop_cols else df.columns
     _check_rank(df[feat_cols])
 
@@ -398,17 +406,20 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
         from ...preprocessing.data_utils import fullmantel
         df_input[feat_cols] = fullmantel(df_input[feat_cols]).values
 
-    cv, mode = _make_holdout_cv(group, folds, cluster)
+    cv, mode = _make_holdout_cv(group, folds, cluster, groupby=groupby)
 
     # Global anchor: a pooled-data PCA defines the canonical PC1..PC{npc} homologue.
     # Every per-fold PCA is Procrustes-aligned to this anchor (handled by rhom when
     # anchor= is set), so the bypc column index carries a consistent meaning across
-    # folds. Same architecture as dir_proj_bypc.
+    # folds. Same architecture as dir_proj_bypc. Under groupby the anchor and the
+    # projection target are themselves within-group-standardized (grouped) solutions.
+    anchor_input = (group_standardize(df_input, groupby, feature_cols=list(feat_cols))[list(feat_cols)]
+                    if groupby else df_input[feat_cols])
     anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
-    anchor_pca.fit(df_input[feat_cols])
+    anchor_pca.fit(anchor_input)
     anchor = anchor_pca.loadings.to_numpy()
 
-    boot_model = RHom(rd=copy.deepcopy(df_input[feat_cols].values), bypc=True, n_comp=npc,
+    boot_model = RHom(rd=copy.deepcopy(anchor_input.values), bypc=True, n_comp=npc,
                       method=method, rotation=rotation, corr=corr, anchor=anchor)
 
     total_folds = folds if folds is not None else int(df_input[group].nunique())

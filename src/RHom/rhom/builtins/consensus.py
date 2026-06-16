@@ -11,6 +11,7 @@ import os
 
 from ...core.base_pca import basePCA
 from ...preprocessing.preliminary import _check_rank
+from ...preprocessing.data_utils import group_standardize
 from ...io.save import setupanalysis
 
 from ..metrics import RHom
@@ -21,7 +22,7 @@ from ._reporting import _summary_stats, _export_report, _progress_wrap
 
 def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
                   method='svd', rotation='varimax', corr='pearson',
-                  cluster=None, stratify=None, save=True, plot=True, display=False,
+                  cluster=None, stratify=None, groupby=None, save=True, plot=True, display=False,
                   shuffle=False, keep_stack=False, progress=True, path='results',
                   file_prefix=randint(10000, 99999)):
     """
@@ -130,7 +131,7 @@ def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
             "Pass boot= for bootstrap mode OR folds=/group= for CV mode, not both."
         )
 
-    drop_cols = [c for c in (group, cluster, stratify) if c is not None]
+    drop_cols = [c for c in (group, cluster, stratify, groupby) if c is not None]
     feat_cols = df.columns.drop(drop_cols) if drop_cols else df.columns
     _check_rank(df[feat_cols])
 
@@ -140,15 +141,18 @@ def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
         from ...preprocessing.data_utils import fullmantel
         df_input[feat_cols] = fullmantel(df_input[feat_cols]).values
 
-    # Omnibus anchor: defines the canonical PC1..PC{npc} frame.
+    # Omnibus anchor: defines the canonical PC1..PC{npc} frame. Under groupby it is a
+    # within-group-standardized (grouped) pooled solution.
+    anchor_src = (group_standardize(df_input, groupby, feature_cols=list(feat_cols))[list(feat_cols)]
+                  if groupby else df_input[feat_cols])
     anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
-    anchor_pca.fit(df_input[feat_cols])
+    anchor_pca.fit(anchor_src)
     anchor = anchor_pca.loadings.to_numpy()
 
     # Build the iterator over resamples / fold-train sets, delegating cluster /
     # stratify awareness to the corresponding pair_cv method.
     if boot is not None:
-        cv = pair_cv(n=boot, cluster=cluster, stratify=stratify)
+        cv = pair_cv(n=boot, cluster=cluster, stratify=stratify, groupby=groupby)
         mode = f"bootstrap (B={boot})"
         if cluster is not None:
             mode += f", cluster-aware on '{cluster}'"
@@ -156,22 +160,29 @@ def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
             mode += f", stratified by '{stratify}'"
 
         def _iter_samples():
+            # bootstrap_resamples doesn't standardize, so apply within-group
+            # standardization here (per resample, on its own rows) when groupby is set.
             for sample in cv.bootstrap_resamples(df_input):
-                yield sample[feat_cols]
+                if groupby:
+                    yield group_standardize(sample, groupby, feature_cols=list(feat_cols))[feat_cols]
+                else:
+                    yield sample[feat_cols]
 
     else:
         # CV mode: same pair_cv configuration as holdout_cv's three-way toggle.
         if group is not None and folds is not None:
-            cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True)
+            cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True, groupby=groupby)
             mode = f"{folds}-fold stratified by '{group}'"
         elif group is not None:
-            cv = pair_cv(group=group, cluster=cluster)
+            cv = pair_cv(group=group, cluster=cluster, groupby=groupby)
             mode = f"leave-one-group-out by '{group}'"
         else:
-            cv = pair_cv(k=folds, cluster=cluster)
+            cv = pair_cv(k=folds, cluster=cluster, groupby=groupby)
             mode = f"{folds}-fold"
 
         def _iter_samples():
+            # holdout_split already applies per-fold within-group standardization via
+            # _prep when groupby is set, so the train array is decomposition-ready.
             for train, _test, _label in cv.holdout_split(df_input):
                 yield pd.DataFrame(train, columns=feat_cols)
 

@@ -66,7 +66,7 @@ print(result["n_components"])
 
 After you've generated your components, it's important to get a sense of how robustly they represent your data and how well they generalize across types of situations (e.g., different sampling environments, different participant populations, etc.).
 
-The rhom module provides a family of analyses that assess component reliability, reproducibility, and generalizability. They share a common interface — pass your items plus, optionally, a `group` column (the variable whose levels you compare) and a `cluster` column (e.g. participant ID, kept intact during resampling so a unit never lands on both sides of a comparison). The guides below are organized by the question each function answers; a single runnable tour of all of them lives in [`examples/rhom example.py`](examples).
+The rhom module provides a family of analyses that assess component reliability, reproducibility, and generalizability. They share a common interface — pass your items plus, optionally, a `group` column (the variable whose levels you compare), a `cluster` column (e.g. participant ID, kept intact during resampling so a unit never lands on both sides of a comparison), and a `groupby` column (to run the analysis on a `groupedPCA` solution — see [Grouped solutions](#grouped-solutions-the-groupby-argument) below). The guides below are organized by the question each function answers; a single runnable tour of all of them lives in [`examples/rhom example.py`](examples).
 
 *How robustly do my components represent my data?*
 - [Split-Half Reliability](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/split-half.md) — `splithalf` (and `splithalf_bypc` for a per-component breakdown)
@@ -90,6 +90,24 @@ Answering these questions requires a metric that captures the similarity between
 - [Tucker's Congruence Coefficient (TCC): Comparing Components by Their Loadings](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/tcc.md) (reported as `phi`)
 - [R-Homologue: Comparing Components by the Way They Organize Observations](https://github.com/Louis-Chitiz/Rhom/blob/main/tutorials/RHom.md) (reported as `rhm`)
 - Subspace similarity (`sub`), via principal angles between the two loading subspaces — rotation- and order-invariant. Add it to any analysis with `subspace=True`.
+
+### Grouped solutions: the `groupby` argument
+
+Every rhom analysis accepts an optional `groupby` column that switches the underlying decomposition from `basePCA` to `groupedPCA` semantics — i.e. each variable is z-scored *within each level of `groupby`* before decomposing, so the components reflect shared within-group structure rather than between-group differences (see `groupedPCA` above for the motivation):
+
+```python
+# Split-half reliability of a grouped solution, standardizing within study:
+splithalf(df=df, npc=4, cluster="ID", groupby="dataset",
+          method="eigen", corr="spearman")
+
+# Held-out CV of a grouped solution:
+holdout_cv(df=df, folds=5, npc=4, groupby="site")
+```
+
+Two things worth knowing:
+
+- **`groupby` is independent of `group`.** `group` is the variable whose levels you *compare* (or iterate over); `groupby` is the nuisance variable you *standardize within*. They can be the same column, but for the comparison analyses (`dir_proj`, `omni_sample`) you usually want them different — standardize within one grouping while comparing across another. Using the same column for both standardizes away differences within the very levels you are comparing.
+- **Standardization is leakage-free.** The within-group z-scoring is applied to each resample (fold, half, bootstrap sample) *on its own rows, after the split* — never to the whole dataset before splitting — so reproducibility estimates are not inflated by group-level information shared across a split. This mirrors how each side of a comparison is fit as an independent grouped solution.
 
 ## Examples
 

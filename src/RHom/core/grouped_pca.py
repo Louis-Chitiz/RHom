@@ -79,18 +79,38 @@ class groupedPCA(basePCA):
         pooled = pd.concat(blocks, axis=0)
         return pooled.loc[df.index]
 
+    def _raw_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        The unstandardized numeric feature columns, with the grouping label dropped.
+
+        Used only for the descriptive "average responses" figure. Group
+        standardization forces each item's within-group mean to ~0, so plotting the
+        standardized values gives empty bars and unit-length error bars; this falls
+        back to the raw values so the figure shows real item response levels.
+        """
+        numeric_df, _, _ = check_inputs(df.drop(columns=self.grouping_col), fit=True)
+        return numeric_df
+
     def fit(self, df: pd.DataFrame, y=None, **kwargs) -> "groupedPCA":
         """Group-standardize the data, then fit the pooled PCA via basePCA (scale=False)."""
         self.ogdf = df.copy()
         pooled = self._standardize_groups(df, fit=True)
         # scale=False: the data is already standardized within each group.
         super().fit(pooled, y=y, scale=False, **kwargs)
+        # super().fit() stored the group-standardized values as _raw_fitted; replace
+        # them with the raw features so the saved means plot is meaningful (see
+        # _raw_features). Decomposition / scores are unaffected -- this attribute only
+        # feeds the descriptive figure.
+        self._raw_fitted = self._raw_features(df)
         return self
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """Group-standardize new data with the fitted scalers, then project via basePCA."""
         pooled = self._standardize_groups(df, fit=False)
-        return super().transform(pooled, scale=False)
+        projected = super().transform(pooled, scale=False)
+        # Same reasoning as fit(): report raw item levels for the descriptive plot.
+        self._raw_project = self._raw_features(df)
+        return projected
 
     def save(self, savebygroup=False, path=None, pathprefix="analysis", includetime=True):
         """

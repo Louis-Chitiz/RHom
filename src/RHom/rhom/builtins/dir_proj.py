@@ -14,6 +14,7 @@ from itertools import combinations
 
 from ...core.base_pca import basePCA
 from ...preprocessing.preliminary import _check_rank
+from ...preprocessing.data_utils import group_standardize
 from ...io.save import setupanalysis
 
 from ..metrics import RHom
@@ -25,7 +26,7 @@ from ._reporting import _build_row, _display_stats, _export_report
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
              folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
-             subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+             groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
     ---------------------------------
@@ -105,21 +106,25 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
             If display=True, prints the output directly in the terminal.
     """
 
-    cl = [cluster] if cluster else []
     groups = df[group].unique()
-    # maindict retains the cluster column so folds can keep whole units together; it is
-    # stripped from the decomposition inside pair_cv._make_folds.
+    # maindict retains the cluster (and groupby) column so folds can keep whole units
+    # together and group-standardize per fold; both are stripped from the decomposition
+    # inside pair_cv._make_folds / _prep.
     maindict = {g: df[df[group] == g].drop(labels=group, axis=1) for g in groups}
     pairings = list(combinations(groups, 2))
 
+    feat_cols = df.columns.drop([c for c in (group, cluster, groupby) if c is not None])
     scaler = StandardScaler()
-    feat_cols = df.columns.drop([group, *cl])
     df_scaled = pd.DataFrame(scaler.fit_transform(df[feat_cols]), columns=feat_cols)
     _check_rank(df_scaled)
 
-    boot_model = RHom(rd=copy.deepcopy(df_scaled.values), n_comp=npc,
+    # R-homologue projection target: group-standardized (full data) under groupby so it
+    # matches the within-group component space; globally scaled features otherwise.
+    rd_src = (group_standardize(df, groupby, feature_cols=list(feat_cols))[list(feat_cols)].values
+              if groupby else df_scaled.values)
+    boot_model = RHom(rd=copy.deepcopy(rd_src), n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(boot=True, k=folds, cluster=cluster)
+    cv = pair_cv(boot=True, k=folds, cluster=cluster, groupby=groupby)
 
     boot_engine = BootstrapEngine(
         estimator=boot_model,
@@ -135,8 +140,8 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
     for ref, comp in pairings:
         print(f"Running {ref} x {comp}")
 
-        _check_rank(maindict[ref].drop(labels=cl, axis=1))
-        _check_rank(maindict[comp].drop(labels=cl, axis=1))
+        _check_rank(maindict[ref][feat_cols])
+        _check_rank(maindict[comp][feat_cols])
         # Execute using referent and comparator subsets
         results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
 
@@ -174,7 +179,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
 
 def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
                   folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
-                  subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+                  groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility: By-Component
     -----------------------------------------------
@@ -261,28 +266,31 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
             If display=True, prints per-component results in the terminal.
     """
 
-    cl = [cluster] if cluster else []
     groups = df[group].unique()
     maindict = {g: df[df[group] == g].drop(labels=group, axis=1) for g in groups}
     pairings = list(combinations(groups, 2))
 
+    feat_cols = df.columns.drop([c for c in (group, cluster, groupby) if c is not None])
     scaler = StandardScaler()
-    feat_cols = df.columns.drop([group, *cl])
     df_scaled = pd.DataFrame(scaler.fit_transform(df[feat_cols]), columns=feat_cols)
     _check_rank(df_scaled)
 
     # Global anchor: pooled-data PCA defines the canonical PC1..PC{npc} homologue. Every
     # per-fold PCA inside the bootstrap is Procrustes-aligned to this anchor (handled by
     # rhom when `anchor=` is set), so the bypc column index carries a consistent meaning
-    # across all replicates and pairs.
+    # across all replicates and pairs. Under groupby the anchor is itself a grouped
+    # (within-group standardized) pooled solution.
+    anchor_input = (group_standardize(df, groupby, feature_cols=list(feat_cols))[list(feat_cols)]
+                    if groupby else df_scaled)
     anchor_pca = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
-    anchor_pca.fit(df_scaled)
+    anchor_pca.fit(anchor_input)
     anchor_loadings = anchor_pca.loadings.to_numpy()
 
-    boot_model = RHom(rd=copy.deepcopy(df_scaled.values), bypc=True, n_comp=npc,
+    rd_src = anchor_input.values if groupby else df_scaled.values
+    boot_model = RHom(rd=copy.deepcopy(rd_src), bypc=True, n_comp=npc,
                       method=method, rotation=rotation, corr=corr,
                       anchor=anchor_loadings)
-    cv = pair_cv(boot=True, k=folds, cluster=cluster)
+    cv = pair_cv(boot=True, k=folds, cluster=cluster, groupby=groupby)
 
     # mode=None means cv.split is used (symmetric two-sided fold cross like dir_proj).
     # per_component=True makes the engine transpose the score / phi accumulators into
@@ -303,8 +311,8 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
     for ref, comp in pairings:
         print(f"Running By-Component Direct Projection: {ref} x {comp}")
 
-        _check_rank(maindict[ref].drop(labels=cl, axis=1))
-        _check_rank(maindict[comp].drop(labels=cl, axis=1))
+        _check_rank(maindict[ref][feat_cols])
+        _check_rank(maindict[comp][feat_cols])
 
         results = boot_engine(X=maindict[ref], y=maindict[comp], group=group)
         # results layout with per_component=True (engine handles transpose + subspace collapse):
@@ -339,12 +347,17 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
         # Per-group full-data PCA -- one PCA per group on the group's entire data
         # (not a bootstrap fold). plot_aligned_wordclouds then Procrustes-aligns each
         # to the global anchor before rendering, so column k in every group's row
-        # refers to the same homologue defined by the pooled reference.
+        # refers to the same homologue defined by the pooled reference. Under groupby
+        # each group's PCA is itself a within-group-standardized (grouped) solution.
+        def _group_fit_input(g):
+            sub = maindict[g]
+            if groupby:
+                return group_standardize(sub, groupby, feature_cols=list(feat_cols))[list(feat_cols)]
+            return sub[feat_cols]
+
         group_loadings = {
             g: basePCA(n_components=npc, rotation=rotation,
-                       method=method, corr=corr).fit(
-                maindict[g].drop(labels=cl, axis=1, errors='ignore')
-            ).loadings
+                       method=method, corr=corr).fit(_group_fit_input(g)).loadings
             for g in groups
         }
         wc_fig = plot_aligned_wordclouds(

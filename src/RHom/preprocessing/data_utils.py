@@ -1,4 +1,47 @@
-from .._deps import pd, np
+from .._deps import pd, np, StandardScaler
+
+
+def group_standardize(df: pd.DataFrame, groupby: str, feature_cols=None) -> pd.DataFrame:
+    """
+    Z-score each feature column *within each level of* ``groupby`` (StandardScaler,
+    population SD), returning a copy with the feature columns replaced by their
+    within-group standard scores and every other column -- including ``groupby`` --
+    left untouched. Row order is preserved.
+
+    This is the standardization ``groupedPCA`` applies before pooling. Exposing it as
+    a standalone function lets the reproducibility builtins reproduce groupedPCA
+    semantics *per resample*: each fold / half / sample is standardized on its own
+    rows, with no information leaking across a split. Because within-group scores have
+    pooled mean 0 and pooled variance 1, a subsequent global StandardScaler (which
+    basePCA applies on every fit) is an exact identity -- so feeding the result
+    straight into the existing basePCA pipeline yields the grouped solution without
+    any change to the decomposition machinery.
+
+    Parameters
+    ----------
+        df: pd.DataFrame
+            Data carrying the feature columns and the ``groupby`` column.
+        groupby: str
+            Column whose levels define the standardization groups.
+        feature_cols: list, optional
+            Columns to standardize. Defaults to every numeric column except
+            ``groupby`` (so string IDs / labels are left alone).
+
+    Returns
+    -------
+        pd.DataFrame
+            A copy of ``df`` with ``feature_cols`` standardized within each group.
+    """
+    if feature_cols is None:
+        feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns
+                        if c != groupby]
+
+    out = df.copy()
+    for _, idx in df.groupby(groupby, sort=False).groups.items():
+        block = out.loc[idx, feature_cols].to_numpy(dtype=float)
+        out.loc[idx, feature_cols] = StandardScaler().fit_transform(block)
+    return out
+
 
 def rename_special_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Standardizes domain-specific column naming."""

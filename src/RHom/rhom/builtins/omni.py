@@ -13,6 +13,7 @@ import copy
 
 from ...core.base_pca import basePCA
 from ...preprocessing.preliminary import _check_rank
+from ...preprocessing.data_utils import group_standardize
 from ...io.save import setupanalysis
 from ...visualization.wordclouds import save_wordclouds
 
@@ -25,7 +26,7 @@ from ._reporting import _build_row, _display_stats, _export_report
 
 def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
                 boot=1000, save=True, display=False, plot=True, shuffle=False, cluster=None,
-                subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+                groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus-Sample Reproducibility
     ------------------------------
@@ -102,14 +103,18 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
             If display=True, prints the output directly in the terminal.
     """
 
-    drop_cols = [c for c in (group, cluster) if c is not None]
+    drop_cols = [c for c in (group, cluster, groupby) if c is not None]
     samples = df[group].unique()
     df_t = df.drop(labels=drop_cols, axis=1)
     _check_rank(df_t)
 
-    boot_model = RHom(rd=copy.deepcopy(df_t.values), n_comp=npc,
+    # R-homologue projection target: group-standardized (full data) under groupby so it
+    # matches the within-group component space (see splithalf for rationale).
+    rd_src = (group_standardize(df, groupby, feature_cols=list(df_t.columns))[list(df_t.columns)].values
+              if groupby else df_t.values)
+    boot_model = RHom(rd=copy.deepcopy(rd_src), n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot)
+    cv = pair_cv(omnibus=True, group=group, cluster=cluster, n=boot, groupby=groupby)
 
     # Initialize engine for omnibus resampling profile
     boot_engine = BootstrapEngine(
@@ -171,7 +176,7 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
 
 
 def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax',
-                  corr='pearson', cluster=None, save=True, plot=True, display=False,
+                  corr='pearson', cluster=None, groupby=None, save=True, plot=True, display=False,
                   path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus Variance Attribution
@@ -274,13 +279,17 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
         \\text{chance} \\approx \\frac{\\mathrm{npc}}{p} \\times 100\\%.
     """
 
-    drop_cols = [c for c in (group, cluster) if c is not None]
+    drop_cols = [c for c in (group, cluster, groupby) if c is not None]
     feat_cols = df.columns.drop(drop_cols)
     _check_rank(df[feat_cols])
 
-    # Omnibus PCA on pooled data defines the reference component set.
+    # Omnibus PCA on pooled data defines the reference component set. Under groupby it is
+    # a within-group-standardized (grouped) pooled solution; the per-group variance
+    # attribution below is unchanged (it standardizes within each attribution group).
+    omni_src = (group_standardize(df, groupby, feature_cols=list(feat_cols))[list(feat_cols)]
+                if groupby else df[feat_cols])
     omni = basePCA(n_components=npc, rotation=rotation, method=method, corr=corr)
-    omni.fit(df[feat_cols])
+    omni.fit(omni_src)
     L = omni.loadings.values
 
     # basePCA stores loadings as eigvec * sqrt(eigval); for variance attribution we
@@ -335,7 +344,7 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
 
 def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
          folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
-         subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
+         groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
 
     """
     Omnibus-Sample Reproducibility: By-Component
@@ -420,12 +429,16 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
             If display=True, prints the output directly in the terminal.
     """
 
-    drop_cols = [c for c in (group, cluster) if c is not None]
+    drop_cols = [c for c in (group, cluster, groupby) if c is not None]
     df_t = df.drop(labels=drop_cols, axis=1)
     _check_rank(df_t)
-    boot_model = RHom(rd=copy.deepcopy(df_t.values), bypc=True, n_comp=npc,
+    # R-homologue projection target: group-standardized (full data) under groupby so it
+    # matches the within-group component space (see splithalf for rationale).
+    rd_src = (group_standardize(df, groupby, feature_cols=list(df_t.columns))[list(df_t.columns)].values
+              if groupby else df_t.values)
+    boot_model = RHom(rd=copy.deepcopy(rd_src), bypc=True, n_comp=npc,
                       method=method, rotation=rotation, corr=corr)
-    cv = pair_cv(boot=True, group=group, cluster=cluster, k=folds)
+    cv = pair_cv(boot=True, group=group, cluster=cluster, k=folds, groupby=groupby)
 
     nval = (df[group].value_counts().min()) / 2
     maindict = cv.omni_prep(df=df, subrows=nval)
