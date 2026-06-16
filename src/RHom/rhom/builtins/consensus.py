@@ -169,16 +169,10 @@ def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
                     yield sample[feat_cols]
 
     else:
-        # CV mode: same pair_cv configuration as holdout_cv's three-way toggle.
-        if group is not None and folds is not None:
-            cv = pair_cv(k=folds, cluster=cluster, stratify=group, stratified_kfold=True, groupby=groupby)
-            mode = f"{folds}-fold stratified by '{group}'"
-        elif group is not None:
-            cv = pair_cv(group=group, cluster=cluster, groupby=groupby)
-            mode = f"leave-one-group-out by '{group}'"
-        else:
-            cv = pair_cv(k=folds, cluster=cluster, groupby=groupby)
-            mode = f"{folds}-fold"
+        # CV mode: identical three-way toggle as holdout_cv, so reuse its builder
+        # rather than duplicating the dispatch and the mode strings.
+        from .holdout import _make_holdout_cv
+        cv, mode = _make_holdout_cv(group, folds, cluster, groupby=groupby)
 
         def _iter_samples():
             # holdout_split already applies per-fold within-group standardization via

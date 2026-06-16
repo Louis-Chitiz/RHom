@@ -95,7 +95,9 @@ print("\nDone — see the results/ folder.")
 # itself informative — it means between-group differences were shaping the plain
 # PCA. The reproducibility tools in walkthrough 3 quantify exactly that.
 #
-# Note: groupedPCA standardizes within groups itself, so it always decomposes a
-# correlation-like (z-scored) matrix. It exposes n_components, rotation, and
-# method, but not `corr` — for Spearman/polychoric grouped solutions you'd
-# pre-rank the data before fitting.
+# Note: groupedPCA standardizes within groups itself, then decomposes the pooled,
+# group-standardized data. It takes the same decomposition knobs as basePCA —
+# n_components, rotation, method, and corr ("pearson"/"spearman"/"polychoric",
+# with non-Pearson values requiring method="eigen"). For example:
+#
+#   model = groupedPCA(GROUP_COL, n_components=3, method="eigen", corr="spearman")

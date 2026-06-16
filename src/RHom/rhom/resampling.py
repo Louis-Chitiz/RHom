@@ -43,55 +43,15 @@ class pair_cv():
               standardization with no leakage across the split. Independent of `group`
               (the comparison/iteration variable), `stratify`, and `cluster`.
 
-    Attributes
-    ----------
-        - scaler: StandardScaler
-            - The scaler used for z-score normalization.
-
-    Methods
-    -------
-        - standardize(df):
-            - z-score normalizes an inputted dataframe using scaler.
-    
-        - assignModel(df, subrows):
-            - Partitions rows of inputted dataset to standardized halves.
-
-        - target_mask(df, mask, target_val):
-            - Boolean row selector for the target subset, with branching logic for stratification and clustering.
-        
-        - stratified_target_mask(df):
-            - Boolean mask selecting half of each stratum's rows, with cluster-aware logic when `cluster` is set.
-
-        - cluster_partition(df, target_size):
-            - Helper for target_mask: picks whole clusters (shuffled) until at least `target_size` rows are gathered.
-
-        - to_features(data):
-            - Returns decomposition columns as a numpy array, dropping any group / cluster / stratify labels.
-
-        - make_folds(data):
-            - Partitions rows into `n_splits` folds, with cluster-aware logic when `cluster` is set.
-
-        - stratified_make_folds(data):
-            - K folds with proportional sampling from each stratum, with cluster-aware logic when `cluster` is set.
-
-        - omni_prep(df, subrows):
-            - Prepares data for omnibus-sample reproducibility by partitioning and standardizing.
-
-        - omni_prep_mini(df, subsamps, subset, subrows):
-            - Prepares data for omnibus-sample reproducibility analysis with a specified subset.
-
-        - split(X, y):
-            - Used in direct-projection reproducibility. Splits the referent and comparate dataframes into folds.
-
-        - bypc_split(X, y):
-            - Used in by-component omnibus-sample reproducibility. Splits omnibus and sample sets into folds.
-
-        - holdout_split(X):
-            - Used in held-out cross-validation (i.e., LOGO, K-fold, stratified K-fold) reproducibility. 
-              Yields train/test splits based on grouping or stratification.
-
-        - redists(df, subset):
-            - Bootstrap resamples the split-half or omnibus-sample subdivisions of an inputted dataframe.
+    Notes
+    -----
+    Each method carries its own docstring; the public entry points are ``split`` /
+    ``asym_split`` (fold-cross profiles), ``holdout_split`` (train/test CV), ``redists``
+    (split-half / omnibus bootstrap), and ``bootstrap_resamples`` (consensus). Every
+    method materialises its decomposition subsets through the single ``_prep`` helper
+    (plus ``_make_folds`` for fold-based protocols), which is where the cluster /
+    stratify / groupby handling lives -- so behaviour changes belong there, not in the
+    individual splitters.
         """
 
     def __init__(
@@ -424,8 +384,7 @@ class pair_cv():
         from the per-component output shape -- callers requesting per-component
         scores should pass ``per_component=True`` to the engine, which works with
         any resampling profile, not just this one. The name reflects the asymmetry
-        between the two sides (X-fixed vs y-folded), not the by-component output
-        that historically motivated it. ``bypc_split`` is kept as a back-compat
+        between the two sides (X-fixed vs y-folded). ``bypc_split`` is kept as a back-compat
         alias for one release.
         """
         foldidx = list(range(self.n_splits))

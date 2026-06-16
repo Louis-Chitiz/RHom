@@ -18,6 +18,11 @@ class groupedPCA(basePCA):
         verbosity (int): Verbosity level passed to basePCA. Defaults to 0.
         rotation (str or bool): Rotation method passed to basePCA. Defaults to "varimax".
         method (str): Decomposition method passed to basePCA ("svd" or "eigen"). Defaults to "svd".
+        corr (str): Correlation type passed to basePCA for the eigen decomposition method:
+            "pearson" (default), "spearman", or "polychoric". As in basePCA, non-Pearson
+            values require method="eigen" (the svd path is Pearson-only). The within-group
+            standardization happens first regardless; corr only selects which correlation
+            matrix of the pooled, group-standardized data is decomposed.
 
     Attributes:
         grouping_col (str): The column used for grouping.
@@ -33,10 +38,12 @@ class groupedPCA(basePCA):
         save(savebygroup=False, path=None, pathprefix="analysis", includetime=True) -> None:
             Save the results of the grouped PCA analysis.
     """
-    def __init__(self, grouping_col=None, n_components="infer", verbosity=0, rotation="varimax", method="svd"):
+    def __init__(self, grouping_col=None, n_components="infer", verbosity=0, rotation="varimax",
+                 method="svd", corr="pearson"):
         if grouping_col is None:
             raise ValueError("Must specify a grouping column.")
-        super().__init__(n_components=n_components, verbosity=verbosity, rotation=rotation, method=method)
+        super().__init__(n_components=n_components, verbosity=verbosity, rotation=rotation,
+                         method=method, corr=corr)
         self.grouping_col = grouping_col
         self.scalerdict = {}
 
