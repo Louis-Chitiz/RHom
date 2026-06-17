@@ -32,6 +32,69 @@ def _summary_stats(distribution, alpha=0.05):
     }
 
 
+def _chance_reference(features, npc, method="svd", rotation="varimax", corr="pearson",
+                      subspace=False, null_reps=200, progress=False, desc="Chance null"):
+    """
+    Estimate the chance level of the similarity metrics by permutation.
+
+    Each of the ``null_reps`` draws Mantel-shuffles the feature columns (destroying
+    cross-variable structure while preserving each item's marginal), splits the rows
+    into two random halves, fits a PCA on each, and scores their similarity exactly as
+    the real analyses do. Returns the pooled per-metric chance level + 95% CI via
+    ``_null_summary``.
+
+    The chance floor for rhm / phi / sub is essentially a property of ``npc`` and the
+    number of items (the metrics pick a best match, so even random components score
+    positively), not of which builtin produced the comparison -- so a single shared
+    estimator gives every analysis a consistent, interpretable "above chance?" baseline.
+    """
+    from ..metrics import RHom
+    from ...preprocessing.data_utils import fullmantel
+
+    feats = features.values if hasattr(features, "values") else np.asarray(features)
+    feats = np.asarray(feats, dtype=float)
+    n = feats.shape[0]
+    half = max(1, n // 2)
+
+    rhm_vals, phi_vals, sub_vals = [], [], []
+    for _ in _progress_wrap(range(null_reps), total=null_reps, desc=desc, enabled=progress):
+        shuffled = fullmantel(pd.DataFrame(feats)).values
+        order = np.random.permutation(n)
+        a, b = shuffled[order[:half]], shuffled[order[half:]]
+
+        model = RHom(rd=shuffled, n_comp=npc, method=method, rotation=rotation, corr=corr)
+        model.fit(a, b)
+        preds = model.predict()
+        corrs = np.corrcoef(preds[0], preds[1], rowvar=False)
+
+        rhm_vals.append(float(model.hom_pairs(corrs)))
+        phi_vals.append(float(model.pro_cong()))
+        if subspace:
+            s = model.subspace_sim()
+            sub_vals.append(float(np.mean(s)) if isinstance(s, (list, tuple, np.ndarray)) else float(s))
+
+    return _null_summary(rhm_vals, phi_vals, sub_vals if subspace else None)
+
+
+def _null_summary(rhm_data, phi_data=None, sub_data=None):
+    """
+    Summarize pooled permutation-null metric values into a per-metric chance reference.
+
+    Given the metric values produced by running an analysis on Mantel-shuffled data
+    (cross-variable structure destroyed), return ``{metric: {x, se, LCI, UCI}}`` -- the
+    chance level and its 95% CI for each of rhm / phi / (sub). This is what the builtins
+    attach to their results (``df.attrs["null"]``) and the plot helpers draw as a
+    reference line / band, so "is my reproducibility above chance?" is answered in-figure
+    rather than by a separate shuffled rerun.
+    """
+    out = {"rhm": _summary_stats(rhm_data)}
+    if phi_data is not None:
+        out["phi"] = _summary_stats(phi_data)
+    if sub_data is not None:
+        out["sub"] = _summary_stats(sub_data)
+    return out
+
+
 def _build_row(n_comp, rhm_data, phi_data=None, sub_data=None, metadata=None):
     """Assembles a single unified row mapping for reporting metrics."""
     row = {"n_comp": f"{n_comp}PC" if isinstance(n_comp, int) else n_comp}

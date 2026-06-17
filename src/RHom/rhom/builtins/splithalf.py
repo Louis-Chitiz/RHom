@@ -19,11 +19,11 @@ from ..metrics import RHom
 from ..resampling import pair_cv
 from ..bootstrap import BootstrapEngine
 
-from ._reporting import _build_row, _display_stats, _export_report
+from ._reporting import _build_row, _display_stats, _export_report, _chance_reference
 
 
 def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
-              boot=1000, save=True, display=False, shuffle=False, cluster=None, stratify=None,
+              boot=1000, save=True, display=False, null=True, null_reps=200, cluster=None, stratify=None,
               groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
@@ -92,8 +92,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
         display: bool, default=False
             Print output in the terminal.
 
-        shuffle: bool, default=False
-            Perform analysis on shuffled "garbage" data.
+        null: bool, default=True
+            If True, estimate the chance level by permutation (Mantel-shuffle the
+            features, compare two PCAs) and attach it to ``df.attrs["null"]`` so a later
+            ``plot_omni(split_df, ...)`` draws the chance reference line + 95% CI band.
+
+        null_reps: int, default=200
+            Number of shuffled permutation draws used to estimate the chance level.
 
         path: str, default='results'
             The path to the output directory.
@@ -139,7 +144,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
         cv=cv,
         mode="splithalf",
         pro_cong=True,
-        shuffle=shuffle,
+        shuffle=False,
         subspace=subspace,
         progress=progress,
         progress_desc="Split-half bootstrap",
@@ -160,6 +165,15 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
             _display_stats(f"Split-Half Reliability for {sample}", row)
 
     split_df = pd.DataFrame(rows)
+
+    # Chance reference: similarity of two PCAs of Mantel-shuffled (structure-free) data.
+    # Attached to attrs so plot_omni(split_df, ...) draws it; splithalf itself has no plot.
+    if null:
+        split_df.attrs["null"] = _chance_reference(df_t, npc, method, rotation, corr,
+                                                   subspace, null_reps, progress,
+                                                   desc="Chance null (split-half)")
+        split_df.attrs["null_reps"] = null_reps
+
     if save:
         _export_report(split_df, path, file_prefix, f"splithalf_{len(df_t.columns)}D_{npc}PC")
 
@@ -167,7 +181,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
 
 
 def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
-                   boot=1000, save=True, plot=True, display=False, shuffle=False, cluster=None,
+                   boot=1000, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
                    stratify=None, groupby=None, subspace=False, progress=True,
                    path='results', file_prefix=randint(10000, 99999)):
     """
@@ -230,12 +244,13 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
         boot: int, default=1000
             Number of bootstrap halves to draw per sample.
 
-        shuffle: bool, default=False
-            If True, Mantel-shuffle the feature columns *once at the top* and use the
-            shuffled frame for both the anchor fit and the bootstrap halves. Diverges
-            from ``splithalf``'s per-call shuffle so the anchor and the halves share
-            the same null realisation (otherwise the alignment scores compare random
-            halves against a real-structure anchor, which isn't a coherent null).
+        null: bool, default=True
+            If True, estimate the chance level by permutation (Mantel-shuffle the
+            features, compare two PCAs) and attach it to ``df.attrs["null"]`` + draw it on
+            each component panel as a dashed reference line + shaded 95% CI band.
+
+        null_reps: int, default=200
+            Number of shuffled permutation draws used to estimate the chance level.
 
         save / plot / display / path / file_prefix:
             Same conventions as the other builtins.
@@ -265,14 +280,7 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
     samples = df[group].unique() if group else ['fulldata']
     _check_rank(df_t)
 
-    # One-shot Mantel shuffle so anchor and halves share the same null realisation.
-    # Pass only the feature columns so fullmantel doesn't accidentally treat a numeric
-    # cluster ID as a feature; reassign by .values to overwrite in place.
     df_input = df.copy()
-    if shuffle:
-        from ...preprocessing.data_utils import fullmantel
-        feat_only = df_input.drop(labels=drop_cols, axis=1, errors='ignore') if drop_cols else df_input
-        df_input[feat_only.columns] = fullmantel(feat_only).values
 
     # R-homologue projection target, group-standardized (full data) under groupby so it
     # matches the within-group-standardized component space (see splithalf for rationale).
@@ -344,6 +352,14 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
 
     splithalf_bypc_df = pd.DataFrame(rows)
 
+    # Chance reference (single floor shown on every component panel).
+    null_ref = None
+    if null:
+        null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
+                                     null_reps, progress, desc="Chance null (split-half bypc)")
+        splithalf_bypc_df.attrs["null"] = null_ref
+        splithalf_bypc_df.attrs["null_reps"] = null_reps
+
     if plot:
         # Attach anchor loadings so plot_bypc can render wordclouds. When group is set
         # each sample has its own anchor; we attach the first sample's by default --
@@ -357,7 +373,7 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
 
         metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
         for name in metrics:
-            fig = plot_bypc(splithalf_bypc_df, metric=name)
+            fig = plot_bypc(splithalf_bypc_df, metric=name, null=null_ref)
             fig.savefig(
                 os.path.join(path, f"{file_prefix}/{file_prefix}_splithalf_bypc_{len(df_t.columns)}D_{npc}PC_{name}.png"),
                 bbox_inches="tight", dpi=150,

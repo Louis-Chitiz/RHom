@@ -26,7 +26,7 @@ Map of the tour:
     4. Blending sources together       omni_sample / omsamp_bypc / omni_variance
     5. Out-of-sample generalization    holdout_cv / holdout_bypc
     6. One consensus solution          consensus_pca
-    7. The null baseline               shuffle=True
+    7. The chance reference (automatic) null=True / null_reps
     8. Re-plotting saved results
 
 Run from the repository root:
@@ -229,16 +229,23 @@ consensus_pca(
 
 
 # ---------------------------------------------------------------------------
-# 7. The null baseline — shuffle=True
+# 7. The chance reference (automatic) — null=True / null_reps
 # ---------------------------------------------------------------------------
-# How high would these scores be by chance? Pass shuffle=True to permute each
-# item independently (destroying cross-item structure) and re-run. Compare the
-# real numbers above against this noise floor to judge what counts as "good".
-splithalf(
-    df=data, npc=NPC, method=METHOD, corr=CORR, rotation=ROTATION,
-    cluster=CLUSTER_COL, stratify=GROUP_COL, boot=BOOT, shuffle=True,
-    file_prefix="tour_splithalf_null",
-)
+# You don't need a separate "garbage" run any more. Every analysis above already
+# estimated a chance level by default (null=True): it permutes the data, re-runs
+# the comparison null_reps times, and draws the chance level + 95% CI right on the
+# figure (a dashed line + shaded band on the bar/component plots; a chance-centred
+# colour scale + annotation on the dir_proj heatmaps). This matters because chance
+# for rhm/phi is NOT zero — the metrics pick a best match, so even random components
+# score positively — so "above chance?" can only be judged against it.
+#
+#   - null=False         -> skip the chance estimate (slightly faster)
+#   - null_reps=500      -> more permutations for a tighter chance CI (default 200)
+#
+# The chance reference is also returned, on the results frame:
+#   res = omni_sample(df=data, group=GROUP_COL, npc=NPC, method=METHOD, corr=CORR,
+#                     cluster=CLUSTER_COL, boot=BOOT)
+#   print(res.attrs["null"])      # {'rhm': {'x':.., 'LCI':.., 'UCI':..}, 'phi': {...}}
 
 
 # ---------------------------------------------------------------------------

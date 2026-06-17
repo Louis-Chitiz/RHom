@@ -3,8 +3,39 @@ from .._deps import pd, np, plt, Union
 import seaborn as sns
 
 
+def _draw_chance_line(ax, ref):
+    """
+    Draw the empirical chance reference on a [0, 1] horizontal-bar axis: a dashed
+    vertical line at the chance level, a shaded 95% CI band, and a small label.
+
+    ``ref`` is a ``{"x", "LCI", "UCI"}`` dict (one metric's entry from the builtins'
+    ``null`` summary), or None to draw nothing. The label is placed on whichever side
+    of the line has room (so it never runs off the frame) and sits in a faint white box
+    so it stays legible over the bars. Shared by plot_omni and plot_bypc so the chance
+    treatment is identical everywhere.
+    """
+    if not ref:
+        return
+    cx = ref["x"]
+    lo, hi = ref.get("LCI"), ref.get("UCI")
+    if lo is not None and hi is not None:
+        ax.axvspan(lo, hi, color="0.6", alpha=0.30, zorder=0)  # 95% CI band
+    ax.axvline(cx, linestyle="--", color="0.4", linewidth=1.2, zorder=3)
+
+    # Place the label inboard: to the left of the line when it sits in the right half,
+    # to the right otherwise -- so "chance ≈ ..." never clips the frame edge.
+    on_right = cx > 0.5
+    ax.text(cx + (-0.012 if on_right else 0.012), 0.97,
+            f"chance ≈ {cx:.2f}".replace("0.", "."),
+            transform=ax.get_xaxis_transform(),
+            ha="right" if on_right else "left", va="top",
+            color="0.35", fontsize=9, zorder=4,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
+
+
 def plot_omni(results: pd.DataFrame, group: str = None, metric: str = "rhm",
-              title: str = None, n_vars: int = None, chance: Union[float, str, bool] = "infer"):
+              title: str = None, n_vars: int = None, chance: Union[float, str, bool] = "infer",
+              null: Union[dict, str, None] = "infer"):
     """
     Horizontal bar plot of omnibus-sample reproducibility with 95% CI error bars.
 
@@ -26,14 +57,23 @@ def plot_omni(results: pd.DataFrame, group: str = None, metric: str = "rhm",
             sqrt(npc / n_vars), since subspace similarity has a non-zero null that
             depends on npc/p.
         chance: float or bool, default=None
-            The chance level for subspace similarity. If provided, a dashed vertical line
-            is drawn at this value.
+            Analytic chance level for subspace similarity (fallback when no empirical
+            null is available). If provided, a dashed vertical line is drawn at this value.
+        null: dict or "infer", default="infer"
+            Empirical permutation-null reference. "infer" reads it from
+            ``results.attrs["null"]`` (attached automatically by the builtins when
+            ``null=True``); pass a dict ``{metric: {"x", "LCI", "UCI"}}`` to override, or
+            None to suppress. When present for the plotted metric, a dashed chance line
+            and a shaded 95% CI band are drawn -- so "above chance?" is answered in-figure.
 
     Returns
     -------
         matplotlib.figure.Figure
     """
     metric = metric.lower()
+    # Capture the null reference before any row filtering (pandas may drop .attrs on a
+    # filtered copy).
+    null_ref = (results.attrs.get("null") if isinstance(null, str) and null == "infer" else null)
     labels_for = {
         "rhm": "Mean Homologue Similarity",
         "phi": "Mean Factor Congruence",
@@ -80,22 +120,25 @@ def plot_omni(results: pd.DataFrame, group: str = None, metric: str = "rhm",
         ax.text(val / 2, i, f"{val:.2f}".replace("-0.", "-.").lstrip("0") or "0",
                 ha="center", va="center", color="white", fontsize=10, fontweight="bold")
 
-    # Chance baseline for subspace similarity (depends on npc / n_vars; not zero)
-    if chance:
+    # Chance reference. Prefer the empirical permutation null (per-metric level + 95% CI,
+    # attached by the builtins); otherwise fall back to the analytic subspace baseline
+    # sqrt(npc/p) for metric="sub". rhm/phi have no simple analytic chance, so they show a
+    # reference only when an empirical null is present.
+    ref = null_ref.get(metric) if isinstance(null_ref, dict) else None
+    if ref is None and metric == "sub" and chance and (chance != "infer" or n_vars is not None):
         npc = int(str(results["n_comp"].iloc[0]).rstrip("PC"))
-        chance = chance if chance is not "infer" else float(np.sqrt(npc / n_vars))
-        ax.axvline(chance, linestyle="--", color="0.3", linewidth=1.2, zorder=3)
-        ax.text(chance + 0.01, 0.99,
-                f"chance ≈ {chance:.2f}".replace("0.", "."),
-                transform=ax.get_xaxis_transform(),
-                color="0.3", fontsize=9, va="top")
+        cval = float(chance) if chance != "infer" else float(np.sqrt(npc / n_vars))
+        ref = {"x": cval}
+
+    _draw_chance_line(ax, ref)
 
     fig.tight_layout()
     return fig
 
 def plot_bypc(stats: pd.DataFrame, loadings: pd.DataFrame = None,
               group: str = None, metric: str = "rhm",
-              title: str = None, font: str = "helvetica"):
+              title: str = None, font: str = "helvetica",
+              null: Union[dict, str, None] = "infer"):
     """
     Per-component panel plot: omnibus wordcloud next to a horizontal bar of that
     component's similarity to each group.
@@ -157,6 +200,11 @@ def plot_bypc(stats: pd.DataFrame, loadings: pd.DataFrame = None,
         group = next(c for c in stats.columns
                      if c not in reserved and not c.startswith(("rhm_", "phi_", "sub_")))
 
+    # Empirical chance reference (same per-metric dict the builtins attach); drawn on
+    # every component panel since under permutation the per-component chance is uniform.
+    null_entry = (stats.attrs.get("null") if isinstance(null, str) and null == "infer" else null)
+    chance_ref = null_entry.get(metric) if isinstance(null_entry, dict) else None
+
     components = list(loadings.columns)
     npc = len(components)
 
@@ -204,6 +252,8 @@ def plot_bypc(stats: pd.DataFrame, loadings: pd.DataFrame = None,
                         f"{val:.2f}".replace("-0.", "-.").lstrip("0") or "0",
                         ha="center", va="center", color="white",
                         fontsize=9, fontweight="bold")
+
+        _draw_chance_line(ax_bar, chance_ref)
 
     # Hide any leftover cells when npc < ncols_pairs * nrows_pairs (e.g. npc=3 in a 2x2 grid)
     for k in range(npc, nrows_pairs * ncols_pairs):
@@ -299,7 +349,8 @@ def plot_omni_variance(results: pd.DataFrame, group: str = None,
     fig.tight_layout()
     return fig
 
-def plot_dirproj(results: pd.DataFrame, metric: str = "rhm", title: str = None):
+def plot_dirproj(results: pd.DataFrame, metric: str = "rhm", title: str = None,
+                 null: Union[dict, str, None] = "infer"):
     """
     Lower-triangle heatmap of direct-projection results for one similarity metric.
 
@@ -356,28 +407,49 @@ def plot_dirproj(results: pd.DataFrame, metric: str = "rhm", title: str = None):
     annot = np.vectorize(lambda v: f"{v:.2f}".lstrip("0"))(mtx.values)
     label = labels_for[metric]
 
+    # Chance reference: with an empirical null, centre a diverging colour scale on the
+    # chance level (cells above chance read warm, below cool) and note it in the title.
+    null_ref = (results.attrs.get("null") if isinstance(null, str) and null == "infer" else null)
+    ref = null_ref.get(metric) if isinstance(null_ref, dict) else None
+    cmap = "vlag" if ref else "flare"
+    center = ref["x"] if ref else None
+
+    full_title = title if title is not None else label
+    if ref:
+        lo, hi = ref.get("LCI"), ref.get("UCI")
+        ci = f" [{lo:.2f}, {hi:.2f}]".replace("0.", ".") if lo is not None and hi is not None else ""
+        full_title += f"\n(chance ≈ {ref['x']:.2f}{ci})".replace("0.", ".")
+
+    # Anchor the low end of the scale at chance so chance is the pale/white floor and a
+    # cell's colour reads directly as its distance above chance (the data range alone
+    # leaves chance off-scale, making proximity to it hard to judge). A below-chance pair
+    # still drops onto the cool side because chance stays the diverging centre.
+    vlo = min(shown.min(), center) if center is not None else shown.min()
+
     fig, ax = plt.subplots(figsize=(n * cell + 2, n * cell + 2))
     sns.heatmap(
         mtx,
         mask=mask,
-        vmin=shown.min(),
+        vmin=vlo,
         vmax=shown.max(),
+        center=center,
         annot=annot,
         fmt="",
         annot_kws={"fontsize": fs},
-        cmap="flare",
+        cmap=cmap,
         square=True,
         linewidths=0.5,
         cbar_kws={"shrink": 0.6, "label": label},
         ax=ax,
     )
-    ax.set_title(title if title is not None else label, fontsize=16, pad=12)
+    ax.set_title(full_title, fontsize=16, pad=12)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=fs)
     ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=fs)
     fig.tight_layout()
     return fig
 
-def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = None):
+def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = None,
+                      null: Union[dict, str, None] = "infer"):
     """
     Per-component grid of pairwise direct-projection heatmaps.
 
@@ -438,6 +510,16 @@ def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = N
     off_vals = np.concatenate([m.values[off_diag] for m in mats.values()])
     vmin, vmax = float(off_vals.min()), float(off_vals.max())
 
+    # Chance reference (one floor for all panels): centre a diverging colour scale on it,
+    # and anchor the scale's low end at chance so chance is the pale floor and saturation
+    # reads as distance above it (below-chance cells still surface on the cool side).
+    null_ref = (results.attrs.get("null") if isinstance(null, str) and null == "infer" else null)
+    ref = null_ref.get(metric) if isinstance(null_ref, dict) else None
+    cmap = "vlag" if ref else "flare"
+    center = ref["x"] if ref else None
+    if center is not None:
+        vmin = min(vmin, center)
+
     ncols = min(npc, 2)
     nrows = int(np.ceil(npc / ncols))
     cell = max(0.6, min(1.0, 10.0 / ng))
@@ -462,9 +544,10 @@ def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = N
             mtx,
             mask=tri_mask,
             vmin=vmin, vmax=vmax,
+            center=center,
             annot=annot, fmt="",
             annot_kws={"fontsize": fs},
-            cmap="flare",
+            cmap=cmap,
             square=True,
             linewidths=0.5,
             cbar=(i == 0),
@@ -480,8 +563,12 @@ def plot_dirproj_bypc(results: pd.DataFrame, metric: str = "rhm", title: str = N
         r, cc = divmod(i, ncols)
         axes[r, cc].set_visible(False)
 
-    fig.suptitle(title if title is not None else f"Per-Component Direct Projection ({labels_for[metric]})",
-                 fontsize=13)
+    suptitle = title if title is not None else f"Per-Component Direct Projection ({labels_for[metric]})"
+    if ref:
+        lo, hi = ref.get("LCI"), ref.get("UCI")
+        ci = f" [{lo:.2f}, {hi:.2f}]".replace("0.", ".") if lo is not None and hi is not None else ""
+        suptitle += f"  ·  chance ≈ {ref['x']:.2f}{ci}".replace("0.", ".")
+    fig.suptitle(suptitle, fontsize=13)
     fig.tight_layout(rect=[0, 0, 0.9, 0.96])
     return fig
 

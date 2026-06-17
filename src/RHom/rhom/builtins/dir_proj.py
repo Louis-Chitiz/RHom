@@ -21,11 +21,11 @@ from ..metrics import RHom
 from ..resampling import pair_cv
 from ..bootstrap import BootstrapEngine
 
-from ._reporting import _build_row, _display_stats, _export_report
+from ._reporting import _build_row, _display_stats, _export_report, _chance_reference
 
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-             folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
+             folds=5, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
              groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
@@ -91,8 +91,13 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
         display: bool, default=False
             Print output in the terminal.
 
-        shuffle: bool, default=False
-            Perform analysis on shuffled "garbage" data.
+        null: bool, default=True
+            If True, estimate the chance level by permutation (Mantel-shuffle the
+            features, compare two PCAs) and attach it to ``df.attrs["null"]``. The heatmap
+            then centres its colour scale on chance and annotates the chance level + CI.
+
+        null_reps: int, default=200
+            Number of shuffled permutation draws used to estimate the chance level.
 
         path: str, default='results'
             The path to the output directory.
@@ -139,7 +144,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
         estimator=boot_model,
         cv=cv,
         pro_cong=True,
-        shuffle=shuffle,
+        shuffle=False,
         subspace=subspace,
         progress=progress,
         progress_desc="Direct-projection CV",
@@ -164,6 +169,14 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
 
     dirproj_df = pd.DataFrame(rows)
 
+    # Chance reference: similarity of two PCAs of Mantel-shuffled (structure-free) data.
+    null_ref = None
+    if null:
+        null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
+                                     null_reps, progress, desc="Chance null (dir-proj)")
+        dirproj_df.attrs["null"] = null_ref
+        dirproj_df.attrs["null_reps"] = null_reps
+
     if plot:
         from ...visualization.rhomplots import plot_dirproj
         setupanalysis(path, file_prefix, includetime=False)
@@ -171,7 +184,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
 
         metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
         for name in metrics:
-            fig = plot_dirproj(dirproj_df, metric=name)
+            fig = plot_dirproj(dirproj_df, metric=name, null=null_ref)
             fig.savefig(
                 os.path.join(path, f"{file_prefix}/{file_prefix}_heatmap{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
                 bbox_inches="tight",
@@ -187,7 +200,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
 
 
 def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-                  folds=5, save=True, plot=True, display=False, shuffle=False, cluster=None,
+                  folds=5, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
                   groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility: By-Component
@@ -259,8 +272,13 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
         display: bool, default=False
             Print output in the terminal.
 
-        shuffle: bool, default=False
-            Perform analysis on shuffled "garbage" data.
+        null: bool, default=True
+            If True, estimate the chance level by permutation (Mantel-shuffle the
+            features, compare two PCAs) and attach it to ``df.attrs["null"]``. The heatmap
+            then centres its colour scale on chance and annotates the chance level + CI.
+
+        null_reps: int, default=200
+            Number of shuffled permutation draws used to estimate the chance level.
 
         path: str, default='results'
             The path to the output directory.
@@ -319,7 +337,7 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
         cv=cv,
         per_component=True,
         pro_cong=True,
-        shuffle=shuffle,
+        shuffle=False,
         subspace=subspace,
         progress=progress,
         progress_desc="Direct-projection bypc CV",
@@ -352,6 +370,14 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
                 _display_stats(f"Direct Projection: {ref} x {comp} - Component {idx + 1}", row)
 
     dirproj_bypc_df = pd.DataFrame(rows)
+
+    # Chance reference (single floor; under permutation per-component chance is uniform).
+    null_ref = None
+    if null:
+        null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
+                                     null_reps, progress, desc="Chance null (dir-proj bypc)")
+        dirproj_bypc_df.attrs["null"] = null_ref
+        dirproj_bypc_df.attrs["null_reps"] = null_reps
 
     if plot:
         # Persist anchor loadings alongside the stats CSV and attach to the returned
@@ -394,7 +420,7 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
 
         metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
         for name in metrics:
-            fig = plot_dirproj_bypc(dirproj_bypc_df, metric=name)
+            fig = plot_dirproj_bypc(dirproj_bypc_df, metric=name, null=null_ref)
             fig.savefig(
                 os.path.join(path, f"{file_prefix}/{file_prefix}_dj_bypc_{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
                 bbox_inches="tight", dpi=150,

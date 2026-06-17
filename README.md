@@ -83,7 +83,7 @@ The rhom module provides a family of analyses that assess component reliability,
 *What single set of loadings should I report?*
 - `consensus_pca` — aggregates many resampled or out-of-sample PCAs into one consensus solution, with a 95% confidence interval on every loading.
 
-Every analysis can also be run on permuted "garbage" data (`shuffle=True`) to establish a null baseline for comparison.
+Every similarity-metric analysis also estimates a **chance reference by default** (`null=True`): it permutes the data (destroying cross-variable structure), re-runs the comparison, and overlays the chance level + 95% CI on the figure — a dashed reference line and shaded band on the bar/component plots, or a chance-centred colour scale plus annotation on the `dir_proj` heatmaps. This matters because the chance level for these metrics is *not* zero (they pick a best match, so even random components score positively), so "is my reproducibility above chance?" can only be judged against it. Set `null=False` to skip, or `null_reps=` (default 200) to change the number of permutations.
 
 Answering these questions requires a metric that captures the similarity between two components (e.g., generated from different halves of the same dataset, or from separate datasets measured on the same items). The rhom module leverages two complementary metrics, plus an optional third:
 
