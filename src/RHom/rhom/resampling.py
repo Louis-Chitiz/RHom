@@ -82,32 +82,37 @@ class pair_cv():
         scaler = StandardScaler()
         return pd.DataFrame(scaler.fit_transform(df), index=df.index, columns=df.columns)
 
-    def _assign_model(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def _assign_model(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int],
+                      sides: str = "both") -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
         """
         Consolidated helper to split a frame into two standardized halves.
 
         When `cluster` is set, whole level-2 units are kept together (a cluster is
         never split across the two halves); otherwise rows are split directly.
         Returns (target_half, remaining_half).
+
+        ``sides`` lets a caller skip the half it does not need -- "target" or "other"
+        instead of "both". The unwanted half comes back as ``None`` and, importantly, is
+        never standardized, so a caller that discards it (e.g. omni_prep_mini keeping only
+        the omnibus halves of the other groups) pays no StandardScaler cost for it.
+        ``_target_mask`` runs regardless, so the RNG draw -- and therefore the row
+        selection -- is identical to the ``"both"`` path.
         """
-        df = df.copy()
         is_target = self._target_mask(df, mask, target_val)
-
         drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in df.columns]
+        grouped = bool(self.groupby and self.groupby in df.columns)
+        gb_drop = drop + ([self.groupby] if (grouped and self.groupby not in drop) else [])
 
-        if self.groupby and self.groupby in df.columns:
-            # Within-group standardize each half on its own rows (groupedPCA per
-            # resample), then drop labels incl. groupby. Returned as DataFrames so
-            # callers like omni_prep_mini can still concatenate before a final pass.
-            gb_drop = drop + ([self.groupby] if self.groupby not in drop else [])
-            half1 = group_standardize(df[is_target], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
-            half2 = group_standardize(df[~is_target], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
-            return half1, half2
+        def _standardized_half(rows: np.ndarray):
+            # Within-group standardize per resample when groupby is set (returned as a
+            # DataFrame so omni_prep_mini can concatenate); else global z-score.
+            if grouped:
+                return group_standardize(df[rows], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
+            return self.standardize(df[rows].drop(labels=drop, axis=1, errors='ignore'))
 
-        half1 = df[is_target].drop(labels=drop, axis=1, errors='ignore')
-        half2 = df[~is_target].drop(labels=drop, axis=1, errors='ignore')
-
-        return self.standardize(half1), self.standardize(half2)
+        half1 = _standardized_half(is_target) if sides in ("both", "target") else None
+        half2 = _standardized_half(~is_target) if sides in ("both", "other") else None
+        return half1, half2
 
     def _target_mask(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int]) -> np.ndarray:
         """
@@ -344,31 +349,73 @@ class pair_cv():
         return models
 
     def omni_prep_mini(
-        self, 
-        df: pd.DataFrame, 
-        subsamps: Dict[str, pd.DataFrame], 
-        subset: str, 
-        subrows: Optional[Union[int, float]] = None
-    ) -> List[pd.DataFrame]:
+        self,
+        df: pd.DataFrame,
+        subsamps: Dict[str, pd.DataFrame],
+        subset: str,
+        subrows: Optional[Union[int, float]] = None,
+        target_df: Optional[pd.DataFrame] = None,
+        feat_arrays: Optional[Dict[str, np.ndarray]] = None,
+    ) -> List:
         """
-        Prepare data for omnibus-sample reproducibility 
+        Prepare data for omnibus-sample reproducibility
         analysis with a specified subset.
+
+        ``target_df`` (the rows of ``subset``) is constant across replicates, so the
+        caller (``redists``) precomputes it once and passes it in to avoid a per-replicate
+        group lookup. ``feat_arrays`` (per-group feature matrices as NumPy arrays, also
+        constant across replicates) enables the fast path below.
+
+        Two equivalent code paths:
+
+        * **NumPy fast path** (no within-group standardization): build the omnibus from
+          the precomputed ``feat_arrays`` using positional masks and ``np.vstack`` -- no
+          per-replicate DataFrame slicing and no DataFrame wrapping in ``standardize``,
+          which together dominated runtime. ``StandardScaler`` is still used, so results
+          are bit-identical to the pandas path.
+        * **Pandas path** (``groupby`` set, needing within-group standardization, or no
+          precomputed arrays): the original ``_assign_model``-based construction.
         """
-        # Process primary subset
-        target_df = df[df[self.group] == subset]
+        if target_df is None:
+            target_df = df[df[self.group] == subset]
+
+        grouped = bool(self.groupby and self.groupby in df.columns)
+
+        if feat_arrays is not None and not grouped:
+            def _omni_mask(frame: pd.DataFrame) -> np.ndarray:
+                # ~half "sample" / half "omnibus"; _target_mask runs identically to the
+                # pandas path, so the RNG draw (and selected rows) is unchanged.
+                m = np.full(frame.shape[0], "omnibus", dtype=object)
+                if subrows is not None:
+                    m[:int(subrows)] = "sample"
+                return self._target_mask(frame, m, "sample")
+
+            is_sample = _omni_mask(target_df)
+            tfeat = feat_arrays[subset]
+            sample_subset = StandardScaler().fit_transform(tfeat[is_sample])
+            omni_chunks = [StandardScaler().fit_transform(tfeat[~is_sample])]
+
+            for s, subsamp_df in subsamps.items():
+                omni_rows = ~_omni_mask(subsamp_df)
+                omni_chunks.append(StandardScaler().fit_transform(feat_arrays[s][omni_rows]))
+
+            omnibus = StandardScaler().fit_transform(np.vstack(omni_chunks))
+            return [sample_subset, omnibus]
+
+        # Pandas path: process primary subset (both halves), then each other group's
+        # omnibus half only (sides="other" skips the discarded sample half).
         mask = np.full(target_df.shape[0], "omnibus", dtype=object)
         if subrows is not None:
             mask[:int(subrows)] = "sample"
-            
+
         sample_subset, target_omni = self._assign_model(target_df, mask, "sample")
         omnibus_chunks = [target_omni]
 
-        # Process complementary sets
         for _, subsamp_df in subsamps.items():
             sub_mask = np.full(subsamp_df.shape[0], "omnibus", dtype=object)
             if subrows is not None:
                 sub_mask[:int(subrows)] = "sample"
-            _, other_omni = self._assign_model(subsamp_df, sub_mask, "sample")
+            _, other_omni = self._assign_model(subsamp_df, sub_mask, "sample", sides="other")
             omnibus_chunks.append(other_omni)
 
         omnibus_df = self.standardize(pd.concat(omnibus_chunks, axis=0))
@@ -491,13 +538,27 @@ class pair_cv():
                 
             samples = df[self.group].unique()
             subsamps = {sample: df[df[self.group] == sample] for sample in samples if sample != subset}
+            # The target group's rows are constant across replicates; compute the slice
+            # once here rather than re-running the object-comparison every iteration.
+            target_df = df[df[self.group] == subset]
+
+            # Precompute each group's feature matrix once (constant across replicates) for
+            # omni_prep_mini's NumPy fast path. Skipped under groupby, where within-group
+            # standardization needs the label columns and the pandas path handles it.
+            feat_arrays = None
+            if not (self.groupby and self.groupby in df.columns):
+                drop = [c for c in (self.group, self.cluster, self.stratify) if c and c in df.columns]
+                feat_arrays = {s: sdf.drop(labels=drop, axis=1, errors='ignore').to_numpy()
+                               for s, sdf in subsamps.items()}
+                feat_arrays[subset] = target_df.drop(labels=drop, axis=1, errors='ignore').to_numpy()
 
             nrows = df[self.group].value_counts()
             nval = nrows.min() / 2
 
             for _ in range(self.n_redists):
                 # Streams memory safely by yielding on the fly
-                yield self.omni_prep_mini(df=df, subset=subset, subsamps=subsamps, subrows=nval)
+                yield self.omni_prep_mini(df=df, subset=subset, subsamps=subsamps,
+                                          subrows=nval, target_df=target_df, feat_arrays=feat_arrays)
                 
         else:
             splitdf = df[df[self.group] == subset].drop(labels=self.group, axis=1) if (self.group is not None and subset is not None) else df.copy()
