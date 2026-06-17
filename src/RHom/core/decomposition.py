@@ -18,14 +18,14 @@ def run_svd(df: pd.DataFrame, n_components: Union[int, str] = "infer", verbosity
         if verbosity > 0:
             print(f"Inferred number of components: {n_components}")
 
+    # A full PCA already contains the top-n components, so slice them rather than
+    # fitting a second restricted PCA (which doubled the SVD cost in every bootstrap
+    # replicate). Identical to PCA(n_components=n).fit: that solver also computes the
+    # full SVD and just truncates.
+    # Loadings: eigenvectors * sqrt(eigenvalues)
+    loadings = full_pca.components_[:n_components].T * np.sqrt(full_pca.explained_variance_[:n_components])
 
-    # Fit the actual model with restricted components
-    model = PCA(n_components=n_components, svd_solver="full").fit(df)
-    
-    # Calculate loadings: eigenvectors * sqrt(eigenvalues)
-    loadings = model.components_.T * np.sqrt(model.explained_variance_)
-    
-    return model, loadings, eigenvalues
+    return full_pca, loadings, eigenvalues
 
 def run_eigen(df: pd.DataFrame, n_components: Union[str, int] = "infer", verbosity: int = 0,
               corr: str = "pearson"):

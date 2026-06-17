@@ -157,12 +157,19 @@ class pair_cv():
 
     def _cluster_partition(self, df: pd.DataFrame, target_size: int) -> np.ndarray:
         """Pick whole clusters (shuffled) until at least `target_size` rows are gathered."""
-        clusters = df[self.cluster].unique().copy()
+        # Group once via a single hash pass rather than scanning ``df[cluster] == c`` per
+        # cluster: the per-cluster O(N) equality test on an object/string cluster column
+        # dominated bootstrap runtime (the comparison alone was ~90% of a split-half run).
+        # ``indices`` keeps first-appearance key order (sort=False), so shuffling consumes
+        # the RNG identically to the old ``.unique()`` path -- same selection, much faster.
+        groups = df.groupby(self.cluster, sort=False).indices
+        idx_values = df.index.to_numpy()
+        clusters = np.array(list(groups.keys()), dtype=object)
         np.random.shuffle(clusters)
 
         chosen, count = [], 0
         for c in clusters:
-            rows = np.asarray(df.index[df[self.cluster] == c])
+            rows = idx_values[groups[c]]
             chosen.append(rows)
             count += len(rows)
             if count >= target_size:
@@ -267,11 +274,19 @@ class pair_cv():
         for downstream PCA fits; group / cluster / stratify columns are NOT dropped
         here -- the caller selects the decomposition columns from the result.
         """
+        # Precompute the cluster -> row-position map once (single hash pass) so each
+        # resample is a set of fast positional gathers rather than an O(N) ``== c`` scan
+        # per drawn cluster on an object/string column (the same hotspot fixed in
+        # _cluster_partition).
+        cluster_groups = (X.groupby(self.cluster, sort=False).indices
+                          if self.cluster and self.cluster in X.columns else None)
+        cluster_keys = (np.array(list(cluster_groups.keys()), dtype=object)
+                        if cluster_groups is not None else None)
+
         for _ in range(self.n_redists):
-            if self.cluster and self.cluster in X.columns:
-                clusters = X[self.cluster].unique()
-                chosen = np.random.choice(clusters, size=len(clusters), replace=True)
-                yield pd.concat([X[X[self.cluster] == c] for c in chosen])
+            if cluster_groups is not None:
+                chosen = np.random.choice(cluster_keys, size=len(cluster_keys), replace=True)
+                yield X.iloc[np.concatenate([cluster_groups[c] for c in chosen])]
             elif self.stratify and self.stratify in X.columns:
                 chunks = []
                 for level in X[self.stratify].unique():
