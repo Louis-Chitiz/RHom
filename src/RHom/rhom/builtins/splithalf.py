@@ -306,7 +306,7 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
                           method=method, rotation=rotation, corr=corr,
                           anchor=anchor_pca.loadings.to_numpy())
 
-        # mode='splithalf' selects cv.redists (random-half resampling). per_component=True
+        # mode='splithalf' selects cv.resample_pairs (random-half resampling). per_component=True
         # makes the engine transpose the score / phi accumulators into [npc × n_replicates]
         # lists at the end and collapse the per-direction subspace cosines to per-replicate
         # means -- so we don't have to do that work here. engine.shuffle=False because we've

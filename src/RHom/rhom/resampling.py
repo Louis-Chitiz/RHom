@@ -46,10 +46,11 @@ class pair_cv():
     Notes
     -----
     Each method carries its own docstring; the public entry points are ``split`` /
-    ``asym_split`` (fold-cross profiles), ``holdout_split`` (train/test CV), ``redists``
-    (split-half / omnibus bootstrap), and ``bootstrap_resamples`` (consensus). Every
-    method materialises its decomposition subsets through the single ``_prep`` helper
-    (plus ``_make_folds`` for fold-based protocols), which is where the cluster /
+    ``asym_split`` (fold-cross profiles), ``holdout_split`` (train/test CV),
+    ``resample_pairs`` (split-half / omnibus bootstrap), and ``bootstrap_resamples``
+    (consensus). Every method materialises its decomposition subsets through the single
+    ``_decomp_features`` helper (plus ``_make_folds`` for fold-based protocols), which is
+    where the cluster /
     stratify / groupby handling lives -- so behaviour changes belong there, not in the
     individual splitters.
         """
@@ -82,7 +83,7 @@ class pair_cv():
         scaler = StandardScaler()
         return pd.DataFrame(scaler.fit_transform(df), index=df.index, columns=df.columns)
 
-    def _assign_model(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int],
+    def _standardized_halves(self, df: pd.DataFrame, mask: np.ndarray, target_val: Union[str, int],
                       sides: str = "both") -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
         """
         Consolidated helper to split a frame into two standardized halves.
@@ -93,7 +94,7 @@ class pair_cv():
 
         ``sides`` lets a caller skip the half it does not need -- "target" or "other"
         instead of "both". The unwanted half comes back as ``None`` and, importantly, is
-        never standardized, so a caller that discards it (e.g. omni_prep_mini keeping only
+        never standardized, so a caller that discards it (e.g. _omnibus_resample keeping only
         the omnibus halves of the other groups) pays no StandardScaler cost for it.
         ``_target_mask`` runs regardless, so the RNG draw -- and therefore the row
         selection -- is identical to the ``"both"`` path.
@@ -105,7 +106,7 @@ class pair_cv():
 
         def _standardized_half(rows: np.ndarray):
             # Within-group standardize per resample when groupby is set (returned as a
-            # DataFrame so omni_prep_mini can concatenate); else global z-score.
+            # DataFrame so _omnibus_resample can concatenate); else global z-score.
             if grouped:
                 return group_standardize(df[rows], self.groupby).drop(labels=gb_drop, axis=1, errors='ignore')
             return self.standardize(df[rows].drop(labels=drop, axis=1, errors='ignore'))
@@ -142,7 +143,7 @@ class pair_cv():
         """
         Boolean mask selecting ``floor(n_stratum / 2)`` rows from each stratum.
 
-        The complement (returned by ``_assign_model`` as the second half) holds the
+        The complement (returned by ``_standardized_halves`` as the second half) holds the
         remaining ``ceil(n_stratum / 2)`` rows per stratum, so a roughly equal sample
         from every level lands on each side. With ``self.cluster`` set, whole clusters
         are kept together within each stratum.
@@ -190,7 +191,7 @@ class pair_cv():
             return np.array(data.values, copy=True)
         return np.array(data, copy=True)
 
-    def _prep(self, data: Union[pd.DataFrame, np.ndarray], global_std: bool) -> np.ndarray:
+    def _decomp_features(self, data: Union[pd.DataFrame, np.ndarray], global_std: bool) -> np.ndarray:
         """
         Materialize a decomposition-ready feature array from a labeled row subset.
 
@@ -348,7 +349,7 @@ class pair_cv():
         models["omnibus"] = omnibus
         return models
 
-    def omni_prep_mini(
+    def _omnibus_resample(
         self,
         df: pd.DataFrame,
         subsamps: Dict[str, pd.DataFrame],
@@ -374,7 +375,7 @@ class pair_cv():
           which together dominated runtime. ``StandardScaler`` is still used, so results
           are bit-identical to the pandas path.
         * **Pandas path** (``groupby`` set, needing within-group standardization, or no
-          precomputed arrays): the original ``_assign_model``-based construction.
+          precomputed arrays): the original ``_standardized_halves``-based construction.
         """
         if target_df is None:
             target_df = df[df[self.group] == subset]
@@ -408,14 +409,14 @@ class pair_cv():
         if subrows is not None:
             mask[:int(subrows)] = "sample"
 
-        sample_subset, target_omni = self._assign_model(target_df, mask, "sample")
+        sample_subset, target_omni = self._standardized_halves(target_df, mask, "sample")
         omnibus_chunks = [target_omni]
 
         for _, subsamp_df in subsamps.items():
             sub_mask = np.full(subsamp_df.shape[0], "omnibus", dtype=object)
             if subrows is not None:
                 sub_mask[:int(subrows)] = "sample"
-            _, other_omni = self._assign_model(subsamp_df, sub_mask, "sample", sides="other")
+            _, other_omni = self._standardized_halves(subsamp_df, sub_mask, "sample", sides="other")
             omnibus_chunks.append(other_omni)
 
         omnibus_df = self.standardize(pd.concat(omnibus_chunks, axis=0))
@@ -429,8 +430,8 @@ class pair_cv():
 
         if not self.boot:
             for fold in product(foldidx, repeat=2):
-                yield (self._prep(x1_c[fold[0]], global_std=False),
-                       self._prep(x2_c[fold[1]], global_std=False))
+                yield (self._decomp_features(x1_c[fold[0]], global_std=False),
+                       self._decomp_features(x2_c[fold[1]], global_std=False))
         else:
             boot_combinations = []
             for z in range(1, self.n_splits + 1):
@@ -440,7 +441,7 @@ class pair_cv():
             for z in boot_folds:
                 f1 = pd.concat([x1_c[v] for v in z[0]], axis=0)
                 f2 = pd.concat([x2_c[v] for v in z[1]], axis=0)
-                yield self._prep(f1, global_std=False), self._prep(f2, global_std=False)
+                yield self._decomp_features(f1, global_std=False), self._decomp_features(f2, global_std=False)
 
     def asym_split(self, X: Union[pd.DataFrame, np.ndarray], y: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         """
@@ -459,12 +460,12 @@ class pair_cv():
         foldidx = list(range(self.n_splits))
         # X is the fixed side, taken whole; prep it once. (Under groupby it is
         # standardized as a single unit -- it is the reference, not a resample.)
-        X_arr = self._prep(X, global_std=False)
+        X_arr = self._decomp_features(X, global_std=False)
         x_c = self._make_folds(y)
 
         if not self.boot:
             for z in product(foldidx, repeat=2):
-                yield X_arr, self._prep(x_c[z[1]], global_std=False)
+                yield X_arr, self._decomp_features(x_c[z[1]], global_std=False)
         else:
             boot_combinations = []
             for z in range(1, self.n_splits + 1):
@@ -472,7 +473,7 @@ class pair_cv():
 
             boot_folds = list(product(boot_combinations, repeat=2))
             for fold_pair in boot_folds:
-                yield X_arr, self._prep(pd.concat([x_c[v] for v in fold_pair[1]], axis=0), global_std=False)
+                yield X_arr, self._decomp_features(pd.concat([x_c[v] for v in fold_pair[1]], axis=0), global_std=False)
 
     # Back-compat alias -- the method was named bypc_split historically because
     # ``omsamp_bypc`` was the only analysis that used it. New code should call
@@ -505,25 +506,25 @@ class pair_cv():
             nf = len(folds)
             for i in range(nf):
                 train = pd.concat([folds[j] for j in range(nf) if j != i], axis=0)
-                yield (self._prep(train, global_std=False),
-                       self._prep(folds[i], global_std=False), f"fold{i + 1}")
+                yield (self._decomp_features(train, global_std=False),
+                       self._decomp_features(folds[i], global_std=False), f"fold{i + 1}")
             return
 
         if self.group is not None and hasattr(X, "columns") and self.group in X.columns:
             for g in X[self.group].unique():
                 is_test = X[self.group] == g
-                yield (self._prep(X[~is_test], global_std=False),
-                       self._prep(X[is_test], global_std=False), str(g))
+                yield (self._decomp_features(X[~is_test], global_std=False),
+                       self._decomp_features(X[is_test], global_std=False), str(g))
             return
 
         folds = self._make_folds(X)
         nf = len(folds)
         for i in range(nf):
             train = pd.concat([folds[j] for j in range(nf) if j != i], axis=0)
-            yield (self._prep(train, global_std=False),
-                   self._prep(folds[i], global_std=False), f"fold{i + 1}")
+            yield (self._decomp_features(train, global_std=False),
+                   self._decomp_features(folds[i], global_std=False), f"fold{i + 1}")
 
-    def redists(self, df: pd.DataFrame, subset: Optional[str] = None) -> Generator[List[pd.DataFrame], None, None]:
+    def resample_pairs(self, df: pd.DataFrame, subset: Optional[str] = None) -> Generator[List[pd.DataFrame], None, None]:
         """
         Generates a set of bootstrap reassignments of different subdivisions lazily.
         
@@ -543,7 +544,7 @@ class pair_cv():
             target_df = df[df[self.group] == subset]
 
             # Precompute each group's feature matrix once (constant across replicates) for
-            # omni_prep_mini's NumPy fast path. Skipped under groupby, where within-group
+            # _omnibus_resample's NumPy fast path. Skipped under groupby, where within-group
             # standardization needs the label columns and the pandas path handles it.
             feat_arrays = None
             if not (self.groupby and self.groupby in df.columns):
@@ -557,7 +558,7 @@ class pair_cv():
 
             for _ in range(self.n_redists):
                 # Streams memory safely by yielding on the fly
-                yield self.omni_prep_mini(df=df, subset=subset, subsamps=subsamps,
+                yield self._omnibus_resample(df=df, subset=subset, subsamps=subsamps,
                                           subrows=nval, target_df=target_df, feat_arrays=feat_arrays)
                 
         else:
@@ -568,10 +569,10 @@ class pair_cv():
             mask[:int(rows / 2)] = 1
 
             for _ in range(self.n_redists):
-                # Same partition engine as _assign_model, but each half is routed through
-                # _prep so it is the final decomposition unit (global-standardized, or
+                # Same partition engine as _standardized_halves, but each half is routed through
+                # _decomp_features so it is the final decomposition unit (global-standardized, or
                 # within-group standardized when groupby is set).
                 is_target = self._target_mask(splitdf, mask, 1)
-                yield [self._prep(splitdf[is_target], global_std=True),
-                       self._prep(splitdf[~is_target], global_std=True)]
+                yield [self._decomp_features(splitdf[is_target], global_std=True),
+                       self._decomp_features(splitdf[~is_target], global_std=True)]
     

@@ -15,7 +15,7 @@ class BootstrapEngine:
 
            * ``None`` (default) -- ``cv.split(X, y)`` -- symmetric two-sided fold cross
              (used by ``dir_proj`` and ``dir_proj_bypc``).
-           * ``"omnibus"`` or ``"splithalf"`` -- ``cv.redists(df=X, subset=y)`` --
+           * ``"omnibus"`` or ``"splithalf"`` -- ``cv.resample_pairs(df=X, subset=y)`` --
              bootstrap half-resampling (used by ``omni_sample`` and ``splithalf``).
            * ``"asym"`` -- ``cv.asym_split(X, y)`` -- asymmetric X-fixed / y-folded
              split (used by ``omsamp_bypc``).
@@ -135,7 +135,7 @@ class BootstrapEngine:
         # as a back-compat synonym for "asym" so old engine instances configured by
         # third-party code keep working.
         if self.mode == "omnibus" or self.mode == "splithalf":
-            splits = self.cv.redists(df=X, subset=y)
+            splits = self.cv.resample_pairs(df=X, subset=y)
         elif self.mode == "asym" or self.mode == "bypc":
             splits = self.cv.asym_split(X, y)
         else:
