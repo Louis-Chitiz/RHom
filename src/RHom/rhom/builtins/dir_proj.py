@@ -53,6 +53,15 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so the analysis
+            characterizes a grouped solution. Independent of ``group``, and typically a
+            *separate* nuisance grouping: with ``groupby=group`` the per-group loadings
+            are unchanged (each pairwise comparison is already computed within a single
+            group), so it is not a meaningful setting for this analysis.
+
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
@@ -168,7 +177,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
                 bbox_inches="tight",
                 dpi=150,
             )
-            plt.show()
+            # plt.show()
             plt.close(fig)
 
     if save:
@@ -210,6 +219,15 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
             never appears on both sides of a comparison. Prevents leakage and
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group.
+
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so the analysis
+            characterizes a grouped solution. Independent of ``group``, and typically a
+            *separate* nuisance grouping: with ``groupby=group`` the per-group loadings
+            are unchanged (each pairwise comparison is already computed within a single
+            group), so it is not a meaningful setting for this analysis.
 
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
@@ -371,7 +389,7 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
             os.path.join(path, f"{file_prefix}/{file_prefix}_dj_bypc_wordclouds_{len(df_scaled.columns)}D_{npc}PC.png"),
             bbox_inches="tight", dpi=150,
         )
-        plt.show()
+        # plt.show()
         plt.close(wc_fig)
 
         metrics = ["rhm", "phi"] + (["sub"] if subspace else [])
@@ -381,7 +399,7 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
                 os.path.join(path, f"{file_prefix}/{file_prefix}_dj_bypc_{len(df_scaled.columns)}D_{npc}PC_{name}.png"),
                 bbox_inches="tight", dpi=150,
             )
-            plt.show()
+            # plt.show()
             plt.close(fig)
 
         loadings_path = os.path.join(

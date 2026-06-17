@@ -1,5 +1,7 @@
 from .._deps import pd, np, Tuple, PCA, eigh, Rotator, Union
 
+import warnings
+
 def run_svd(df: pd.DataFrame, n_components: Union[int, str] = "infer", verbosity: int = 0):
     """
     Runs PCA using SVD. Returns the model, loadings, and eigenvalues.
@@ -63,6 +65,25 @@ def run_eigen(df: pd.DataFrame, n_components: Union[str, int] = "infer", verbosi
         raise ValueError(
             f"Unknown corr={corr!r}; pick one of 'pearson', 'spearman', 'polychoric'."
         )
+
+    # Guard against non-finite correlations: a column with zero variance within this
+    # subset (e.g. a constant item in a small resampling fold, common under spearman)
+    # makes its correlations undefined (NaN), which eigh rejects outright. Zero out the
+    # non-finite entries: a fully-constant item then becomes a zero row/column (a
+    # zero-variance dimension -> eigenvalue 0 -> excluded from the top components, so it
+    # carries ~zero loading), while an isolated bad pair is just treated as uncorrelated.
+    # This lets the decomposition proceed instead of aborting the whole resampling run.
+    if not np.all(np.isfinite(R)):
+        n_bad = int(np.sum(~np.isfinite(np.diag(R))))
+        warnings.warn(
+            f"Correlation matrix had non-finite entries from {n_bad} zero-variance "
+            "column(s) (e.g. a constant item within a resampling fold). They were "
+            "zeroed so the eigendecomposition can proceed; the affected items carry "
+            "~zero loading and drop out of the retained components. Frequent warnings "
+            "suggest folds too small for the data (try fewer folds, or method='svd').",
+            stacklevel=2,
+        )
+        R = np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0)
 
     # Perform eigen decomposition (eigh returns values in ascending order)
     evals, evecs = eigh(R)

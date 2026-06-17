@@ -56,6 +56,18 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so components reflect
+            within-group covariance rather than between-group differences. Independent
+            of ``group``. Setting ``groupby=group`` is valid and measures the
+            reproducibility of the grouped (within-``group`` standardized) solution --
+            the right estimand when that is the model you report. It does not, however,
+            test whether *raw* between-group differences threaten blendability (the
+            other way omnibus-sample is read); use ``groupby=None`` for that, or compare
+            the two.
+
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
@@ -66,6 +78,9 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
             correlation behind ordinal items via Olsson 1979 MLE; meaningful only for
             genuinely ordinal data and noticeably slower). Ignored under `method='svd'`,
             which is Pearson-only; pass `method='eigen'` to switch correlation type.
+
+        groupby: str, default=None
+            If used, the omnibus sets using groupwise standardization.
 
         npc: int, default=None
             Number of components to extract per solution.
@@ -204,6 +219,13 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
             Optional level-2 / clustering column. Stripped before decomposition so a
             cluster ID does not contaminate the PCA, but has no effect on the variance
             attribution itself (which is deterministic and does not resample).
+
+        groupby: str, default=None
+            Optional nuisance-grouping column. When set, the omnibus PCA is a grouped
+            (within-``groupby`` standardized) solution; the per-group variance
+            attribution is otherwise unchanged. Independent of ``group``. With
+            ``groupby=group`` the figure reports how much within-group variance the
+            grouped components capture -- appropriate when groupedPCA is your model.
 
         corr: str, default="pearson"
             Correlation matrix used for the omnibus fit under ``method='eigen'``:
@@ -376,6 +398,18 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so components reflect
+            within-group covariance rather than between-group differences. Independent
+            of ``group``. Setting ``groupby=group`` is valid and measures the
+            reproducibility of the grouped (within-``group`` standardized) solution --
+            the right estimand when that is the model you report. It does not, however,
+            test whether *raw* between-group differences threaten blendability (the
+            other way omnibus-sample is read); use ``groupby=None`` for that, or compare
+            the two.
+
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles between the two
             loading subspaces (sub_* columns; rotation- and order-invariant, in [0, 1]).
@@ -486,7 +520,7 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
         om_model = basePCA(n_components=npc, rotation=rotation, method=method)
         om_model.fit(maindict['omnibus'])
 
-        cloud_dir = setupanalysis(os.path.join(path, file_prefix), "bypc_wordclouds", includetime=False)
+        cloud_dir = setupanalysis(os.path.join(path, str(file_prefix)), "bypc_wordclouds", includetime=False)
         save_wordclouds(om_model.loadings, path=str(cloud_dir))
 
         # Persist the loadings alongside the stats CSV and attach them to the returned

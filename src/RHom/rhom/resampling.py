@@ -315,10 +315,17 @@ class pair_cv():
             omni_drop = [c for c in (self.group, self.cluster) if c and c in subsamp_df.columns]
             omnibus_chunks.append(subsamp_df[~is_sample].drop(labels=omni_drop, axis=1, errors='ignore'))
 
-        # The omnibus is a single fixed reference set, so standardize it as one unit
-        # (within-group when groupby is set, else global). omni_drop above keeps the
-        # groupby column on each chunk so _prep can see it here.
-        models["omnibus"] = self._prep(pd.concat(omnibus_chunks, axis=0), global_std=True)
+        # The omnibus is a single fixed reference set, standardized as one unit. Keep it
+        # a *named* DataFrame (not a bare array) so downstream basePCA fits -- e.g. the
+        # omsamp_bypc wordcloud model -- recover the item labels. Within-group standardize
+        # when groupby is set (omni_drop above leaves the groupby column on each chunk for
+        # this), else global z-score.
+        omnibus = pd.concat(omnibus_chunks, axis=0)
+        if self.groupby and self.groupby in omnibus.columns:
+            omnibus = group_standardize(omnibus, self.groupby).drop(columns=self.groupby)
+        else:
+            omnibus = self.standardize(omnibus)
+        models["omnibus"] = omnibus
         return models
 
     def omni_prep_mini(

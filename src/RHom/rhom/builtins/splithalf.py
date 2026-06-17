@@ -51,6 +51,13 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
             pseudoreplication with nested data. Requires at least `folds` distinct clusters
             per group where cross-validation is used.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so components reflect
+            within-group covariance rather than between-group differences. Independent
+            of ``group`` / ``cluster`` / ``stratify``.
+
         stratify: str, default=None
             Optional stratification column for whole-dataset splithalf. When provided
             (and ``group`` is None), each bootstrap half is drawn proportionally from
@@ -192,6 +199,13 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
         cluster: str, default=None
             Optional level-2 / clustering column. Whole clusters are kept on one side
             of every bootstrap split.
+
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so components reflect
+            within-group covariance rather than between-group differences. Independent
+            of ``group`` / ``cluster`` / ``stratify``.
 
         stratify: str, default=None
             Optional stratification column for whole-dataset splithalf. When provided

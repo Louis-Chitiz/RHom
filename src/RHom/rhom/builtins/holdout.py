@@ -193,6 +193,13 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
             With ``group=...`` only, cluster is irrelevant since groups already define
             the partition.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per fold, on its own rows -- leakage-free), so components reflect
+            within-group covariance rather than between-group differences. Independent
+            of ``group`` / ``cluster``.
+
         subspace: bool, default=False
             If True, also report subspace similarity via principal angles.
 
@@ -363,7 +370,7 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
         df: pd.Dataframe, default=None
             Decomposition columns plus the grouping / clustering columns if used.
 
-        group / folds / boot / cluster / subspace / corr / npc / rotation / shuffle:
+        group / folds / boot / cluster / groupby / subspace / corr / npc / rotation / shuffle:
             Same meaning as in ``holdout_cv``.
 
         save / plot / display / path / file_prefix:

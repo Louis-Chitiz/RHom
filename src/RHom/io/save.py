@@ -24,11 +24,12 @@ def setupanalysis(
     # Use current working directory if no path is provided
     base_path = Path(path) if path else Path.cwd()
     
-    # Construct folder name
-    folder_name = pathprefix
+    # Construct folder name. Coerce to str so the default file_prefix (a random int
+    # from randint()) works in path joins, not just user-supplied string prefixes.
+    folder_name = str(pathprefix)
     if includetime:
         timestamp = datetime.now().strftime("%d%m%Y")
-        folder_name = f"{pathprefix}_{timestamp}"
+        folder_name = f"{folder_name}_{timestamp}"
     
     full_path = base_path / folder_name
     

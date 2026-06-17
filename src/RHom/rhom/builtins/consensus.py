@@ -76,6 +76,13 @@ def consensus_pca(df=None, group=None, folds=None, boot=None, npc=None,
             are sampled with replacement. In CV modes, whole clusters are kept
             within a fold.
 
+        groupby: str, default=None
+            Optional nuisance-grouping column for groupedPCA-style decomposition: each
+            variable is z-scored within each level of this column before decomposing
+            (per resample, on its own rows -- leakage-free), so the consensus loadings
+            describe a grouped solution. Independent of ``group`` / ``cluster`` /
+            ``stratify``.
+
         stratify: str, default=None
             Optional stratification column for bootstrap mode (sample with replacement
             within each level). In CV modes use ``group`` as the stratifier instead.
