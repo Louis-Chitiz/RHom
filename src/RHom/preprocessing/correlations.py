@@ -11,7 +11,7 @@ per pair, with several bivariate-normal CDF evaluations per optimisation step. I
 meaningful only on genuinely ordinal items (Likert): applied to continuous data it
 will treat every unique value as a category, which is rarely what you want.
 """
-from .._deps import pd, np
+from .._deps import pd, np, warnings
 
 from scipy.stats import norm, multivariate_normal
 from scipy.optimize import minimize_scalar
@@ -143,3 +143,67 @@ def polychoric_corr_matrix(df, verbose=False):
                 print(f"  {cols[i]} x {cols[j]}: {R[i, j]:+.3f}")
 
     return pd.DataFrame(R, index=cols, columns=cols) if is_df else R
+
+def correlation_matrix(df: pd.DataFrame, corr: str = "pearson") -> np.ndarray:
+    """
+    Builds the correlation matrix decomposed by the eigen-based routines.
+
+    Parameters
+    ----------
+        df: pd.DataFrame or array-like
+            The numeric data.
+        corr: str, default="pearson"
+            Which correlation matrix to build:
+              - "pearson" (default) -- numpy's product-moment correlation
+              - "spearman" -- rank correlation; monotonic-invariant, ordinal-friendly
+              - "polychoric" -- latent-continuous correlation behind ordinal items via
+                Olsson (1979) MLE. Only meaningful for genuinely ordinal data; much
+                slower (one optimisation per pair).
+
+    Returns
+    -------
+        np.ndarray
+            The (p x p) correlation matrix. Non-finite entries from zero-variance
+            columns (e.g. a constant item within a small resampling fold) are zeroed
+            with a warning, so a downstream eigendecomposition can proceed instead of
+            aborting.
+    """
+    if not isinstance(corr, str):
+        raise TypeError(
+            f"corr must be a string ('pearson', 'spearman', or 'polychoric'); "
+            f"got {type(corr).__name__}."
+        )
+    corr = corr.lower()
+    if corr == "pearson":
+        R = np.corrcoef(df, rowvar=False)
+    elif corr == "spearman":
+        R = pd.DataFrame(df).corr(method="spearman").values
+    elif corr == "polychoric":
+        from ..preprocessing.correlations import polychoric_corr_matrix
+        R = polychoric_corr_matrix(df)
+        R = R.values if hasattr(R, "values") else R
+    else:
+        raise ValueError(
+            f"Unknown corr={corr!r}; pick one of 'pearson', 'spearman', 'polychoric'."
+        )
+
+    # Guard against non-finite correlations: a column with zero variance within this
+    # subset (e.g. a constant item in a small resampling fold, common under spearman)
+    # makes its correlations undefined (NaN), which eigh rejects outright. Zero out the
+    # non-finite entries: a fully-constant item then becomes a zero row/column (a
+    # zero-variance dimension -> eigenvalue 0 -> excluded from the top components, so it
+    # carries ~zero loading), while an isolated bad pair is just treated as uncorrelated.
+    # This lets the decomposition proceed instead of aborting the whole resampling run.
+    if not np.all(np.isfinite(R)):
+        n_bad = int(np.sum(~np.isfinite(np.diag(R))))
+        warnings.warn(
+            f"Correlation matrix had non-finite entries from {n_bad} zero-variance "
+            "column(s) (e.g. a constant item within a resampling fold). They were "
+            "zeroed so the eigendecomposition can proceed; the affected items carry "
+            "~zero loading and drop out of the retained components. Frequent warnings "
+            "suggest folds too small for the data (try fewer folds, or method='svd').",
+            stacklevel=2,
+        )
+        R = np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return R

@@ -1,4 +1,4 @@
-from .._deps import pd, np, StandardScaler
+from .._deps import pd, np, StandardScaler, warnings
 
 
 def group_standardize(df: pd.DataFrame, groupby: str, feature_cols=None) -> pd.DataFrame:

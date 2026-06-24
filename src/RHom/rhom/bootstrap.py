@@ -1,6 +1,4 @@
-from .._deps import pd, np, Any, Dict, Optional
-
-import warnings
+from .._deps import pd, np, Any, Dict, Optional, warnings
 
 from ..preprocessing.data_utils import fullmantel
 

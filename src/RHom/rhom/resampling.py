@@ -1,5 +1,4 @@
-from .._deps import pd, np, StandardScaler
-from typing import Dict, List, Tuple, Generator, Optional, Union
+from .._deps import pd, np, StandardScaler, Dict, List, Tuple, Generator, Optional, Union
 from itertools import combinations, product
 
 from ..preprocessing.data_utils import group_standardize
