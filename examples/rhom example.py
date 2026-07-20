@@ -20,7 +20,7 @@ the "PERFORMANCE" notes to speed it up or scale it up for a final run.
 
 Map of the tour:
     0. Setup
-    1. How many components?            parallel_analysis
+    1. How many components?            parallel_analysis / velicer_map
     2. Reliability (one sample)        splithalf / splithalf_bypc
     3. Reproducibility across groups   dir_proj / dir_proj_bypc
     4. Blending sources together       omni_sample / omsamp_bypc / omni_variance
