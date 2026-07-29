@@ -171,7 +171,8 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
     if null:
         split_df.attrs["null"] = _chance_reference(df_t, npc, method, rotation, corr,
                                                    subspace, null_reps, progress,
-                                                   desc="Chance null (split-half)")
+                                                   desc="Chance null (split-half)",
+                                                   groupby_labels=(df[groupby].values if groupby else None))
         split_df.attrs["null_reps"] = null_reps
 
     if save:
@@ -356,7 +357,10 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
     null_ref = None
     if null:
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
-                                     null_reps, progress, desc="Chance null (split-half bypc)")
+                                     null_reps, progress, desc="Chance null (split-half bypc)",
+                                     groupby_labels=(df[groupby].values if groupby else None),
+                                     anchor=anchor_loadings_by_sample[samples[0]].to_numpy(),
+                                     bypc=True)
         splithalf_bypc_df.attrs["null"] = null_ref
         splithalf_bypc_df.attrs["null_reps"] = null_reps
 

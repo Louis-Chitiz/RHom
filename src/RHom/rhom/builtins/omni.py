@@ -181,7 +181,9 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     null_ref = None
     if null:
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
-                                     null_reps, progress, desc="Chance null (omnibus)")
+                                     null_reps, progress, desc="Chance null (omnibus)",
+                                     groupby_labels=(df[groupby].values if groupby else None),
+                                     group_labels=df[group].values)
         omsamp_df.attrs["null"] = null_ref
         omsamp_df.attrs["null_reps"] = null_reps
 
@@ -538,7 +540,9 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
     null_ref = None
     if null:
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
-                                     null_reps, progress, desc="Chance null (omnibus bypc)")
+                                     null_reps, progress, desc="Chance null (omnibus bypc)",
+                                     groupby_labels=(df[groupby].values if groupby else None),
+                                     group_labels=df[group].values, bypc=True)
         stats_bypc.attrs["null"] = null_ref
         stats_bypc.attrs["null_reps"] = null_reps
 

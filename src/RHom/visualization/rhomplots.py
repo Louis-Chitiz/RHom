@@ -200,10 +200,13 @@ def plot_bypc(stats: pd.DataFrame, loadings: pd.DataFrame = None,
         group = next(c for c in stats.columns
                      if c not in reserved and not c.startswith(("rhm_", "phi_", "sub_")))
 
-    # Empirical chance reference (same per-metric dict the builtins attach); drawn on
-    # every component panel since under permutation the per-component chance is uniform.
+    # Empirical chance reference (the per-metric dict the builtins attach). When the null
+    # was computed with the same anchored / per-component estimator this analysis used, a
+    # per-component list is attached under "<metric>_bypc" and each panel gets its own
+    # floor; otherwise the pooled scalar is drawn on every panel.
     null_entry = (stats.attrs.get("null") if isinstance(null, str) and null == "infer" else null)
     chance_ref = null_entry.get(metric) if isinstance(null_entry, dict) else None
+    chance_bypc = null_entry.get(f"{metric}_bypc") if isinstance(null_entry, dict) else None
 
     components = list(loadings.columns)
     npc = len(components)
@@ -253,7 +256,9 @@ def plot_bypc(stats: pd.DataFrame, loadings: pd.DataFrame = None,
                         ha="center", va="center", color="white",
                         fontsize=9, fontweight="bold")
 
-        _draw_chance_line(ax_bar, chance_ref)
+        panel_ref = (chance_bypc[k] if chance_bypc is not None and k < len(chance_bypc)
+                     else chance_ref)
+        _draw_chance_line(ax_bar, panel_ref)
 
     # Hide any leftover cells when npc < ncols_pairs * nrows_pairs (e.g. npc=3 in a 2x2 grid)
     for k in range(npc, nrows_pairs * ncols_pairs):

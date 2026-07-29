@@ -109,37 +109,55 @@ def rotated_variance(pca):
 
     return data
 
+def column_mantel(df, rng=None):
+    """
+    Column-wise permutation: shuffle each feature column independently.
+
+    This is the correct permutation for a correlation-structure null. Permuting each
+    column on its own preserves every item's marginal distribution *exactly* while
+    destroying all cross-variable structure -- including the row-mean / general
+    (acquiescence) factor -- so the expected correlation matrix is the identity.
+
+    Parameters
+    ----------
+        df: pd.DataFrame or ndarray, shape (n, p)
+        rng: np.random.Generator, optional
+            Pass an explicit generator for a reproducible, seedable null. When None
+            (the default), the global ``np.random`` state is used, so the shuffle
+            honours ``np.random.seed`` exactly like the rest of the resampling engine.
+
+    Returns
+    -------
+        ndarray, shape (n, p)
+    """
+    A = df.values if hasattr(df, "values") else np.asarray(df)
+    A = np.asarray(A, dtype=float)
+    permute = np.random.permutation if rng is None else rng.permutation
+    return np.column_stack([permute(A[:, j]) for j in range(A.shape[1])])
+
 def fullmantel(df):
     """
-    Full-Mantel Shuffle (Row and Column Permutation)
-    -----------------------------------------------
-    Detects numeric columns, shuffles their rows and columns independently,
-    and returns a dataframe with non-numeric metadata preserved.
+    Permutation null: shuffle each numeric column independently.
+
+    Permutes every numeric column on its own (via :func:`column_mantel`), destroying
+    cross-variable correlation structure while preserving each item's marginal
+    distribution. Non-numeric metadata columns are passed through unchanged.
+
+    Note: earlier versions permuted each *row's* values across items, which preserved
+    the row mean / general factor and so did not yield a valid null for
+    correlation-structure analyses. It now performs the correct column-wise shuffle.
     """
     # Identify numeric vs non-numeric columns
     numeric_df = df.select_dtypes(include=[np.number])
     metadata_df = df.select_dtypes(exclude=[np.number])
-    
+
     if numeric_df.empty:
         return df
-        
-    arr = numeric_df.values
-    x, y = arr.shape
-    
-    # Perform the Mantel Shuffle
-    # Shuffle rows first
-    arr = arr[np.random.permutation(x)]
-    
-    # Shuffle columns independently for each row
-    rows = np.indices((x, y))[0]
-    cols = [np.random.permutation(y) for _ in range(x)]
-    shuffled_values = arr[rows, cols]
-    
-    # Reconstruct the DataFrame
+
     shuffled_numeric = pd.DataFrame(
-        shuffled_values, 
-        index=numeric_df.index, 
-        columns=numeric_df.columns
+        column_mantel(numeric_df),
+        index=numeric_df.index,
+        columns=numeric_df.columns,
     )
-    
+
     return pd.concat([metadata_df, shuffled_numeric], axis=1)

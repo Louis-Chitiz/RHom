@@ -173,7 +173,9 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
     null_ref = None
     if null:
         null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
-                                     null_reps, progress, desc="Chance null (dir-proj)")
+                                     null_reps, progress, desc="Chance null (dir-proj)",
+                                     groupby_labels=(df[groupby].values if groupby else None),
+                                     group_labels=df[group].values)
         dirproj_df.attrs["null"] = null_ref
         dirproj_df.attrs["null_reps"] = null_reps
 
@@ -375,7 +377,10 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
     null_ref = None
     if null:
         null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
-                                     null_reps, progress, desc="Chance null (dir-proj bypc)")
+                                     null_reps, progress, desc="Chance null (dir-proj bypc)",
+                                     groupby_labels=(df[groupby].values if groupby else None),
+                                     group_labels=df[group].values,
+                                     anchor=anchor_loadings, bypc=True)
         dirproj_bypc_df.attrs["null"] = null_ref
         dirproj_bypc_df.attrs["null_reps"] = null_reps
 

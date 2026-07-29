@@ -317,7 +317,9 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
     null_ref = None
     if null:
         null_ref = _chance_reference(df_input[feat_cols], npc, method, rotation, corr,
-                                     subspace, null_reps, progress, desc=f"Chance null ({mode})")
+                                     subspace, null_reps, progress, desc=f"Chance null ({mode})",
+                                     groupby_labels=(df_input[groupby].values if groupby else None),
+                                     group_labels=(df_input[group].values if group is not None else None))
         holdout_df.attrs["null"] = null_ref
         holdout_df.attrs["null_reps"] = null_reps
 
@@ -492,7 +494,10 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
     null_ref = None
     if null:
         null_ref = _chance_reference(df_input[feat_cols], npc, method, rotation, corr,
-                                     subspace, null_reps, progress, desc=f"Chance null bypc ({mode})")
+                                     subspace, null_reps, progress, desc=f"Chance null bypc ({mode})",
+                                     groupby_labels=(df_input[groupby].values if groupby else None),
+                                     group_labels=(df_input[group].values if group is not None else None),
+                                     anchor=anchor, bypc=True)
         holdout_bypc_df.attrs["null"] = null_ref
         holdout_bypc_df.attrs["null_reps"] = null_reps
 

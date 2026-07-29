@@ -32,66 +32,155 @@ def _summary_stats(distribution, alpha=0.05):
     }
 
 
+def _standardize_within(A, labels):
+    """Z-score each column within each level of ``labels`` (the groupby= behaviour)."""
+    if labels is None:
+        return A
+    out = np.empty_like(A, dtype=float)
+    labels = np.asarray(labels)
+    for g in np.unique(labels):
+        m = labels == g
+        block = A[m]
+        sd = block.std(axis=0, ddof=0)
+        sd[sd == 0] = 1.0
+        out[m] = (block - block.mean(axis=0)) / sd
+    return out
+
+
 def _chance_reference(features, npc, method="svd", rotation="varimax", corr="pearson",
-                      subspace=False, null_reps=200, progress=False, desc="Chance null"):
+                      subspace=False, null_reps=200, progress=False, desc="Chance null",
+                      *, anchor=None, bypc=False, groupby_labels=None,
+                      group_labels=None, rd=None, seed=None):
     """
     Estimate the chance level of the similarity metrics by permutation.
 
-    Each of the ``null_reps`` draws Mantel-shuffles the feature columns (destroying
-    cross-variable structure while preserving each item's marginal), splits the rows
-    into two random halves, fits a PCA on each, and scores their similarity exactly as
-    the real analyses do. Returns the pooled per-metric chance level + 95% CI via
-    ``_null_summary``.
+    Each of the ``null_reps`` draws permutes every feature column independently (via
+    ``column_mantel`` -- destroying cross-variable structure while preserving each item's
+    marginal), applies the same within-group standardization the real analysis used,
+    splits the rows, fits a PCA on each side, and scores their similarity with *the same
+    estimator configuration* the caller used for the observed values. Returns the pooled
+    per-metric chance level + 95% CI (plus per-component entries when ``anchor`` is set)
+    via ``_null_summary``.
 
     The chance floor for rhm / phi / sub is essentially a property of ``npc`` and the
     number of items (the metrics pick a best match, so even random components score
     positively), not of which builtin produced the comparison -- so a single shared
     estimator gives every analysis a consistent, interpretable "above chance?" baseline.
+
+    Parameters
+    ----------
+    features : pd.DataFrame or ndarray
+        The raw feature columns. Shuffling happens before standardization, so pass the
+        unstandardized frame even when ``groupby_labels`` is set.
+    anchor : ndarray, optional
+        The same ``anchor_loadings`` used by the bypc builtins. When set, the null is
+        scored in anchor mode (diagonal readout, no Hungarian) and the returned dict
+        carries per-component arrays under ``phi_bypc`` / ``rhm_bypc`` alongside the
+        pooled scalars, so the estimator matches the observed statistic.
+    bypc : bool
+        Mirror the estimator's ``bypc`` flag. Implied by ``anchor`` but accepted
+        separately for symmetry with ``RHom``.
+    groupby_labels : array-like, optional
+        Per-row levels of the builtin's ``groupby`` column, so the null is standardized
+        exactly as the observed analysis was.
+    group_labels : array-like, optional
+        Per-row levels of the builtin's ``group`` column. When supplied with exactly two
+        levels, the null splits on those levels rather than drawing random halves, so it
+        inherits the real n imbalance between the two sources. Ignored otherwise.
+    rd : ndarray, optional
+        Projection target for the R-homologue score. Defaults to the standardized
+        shuffled matrix (a proper null); pass an explicit array only to mirror a
+        non-default ``RHom(rd=...)``.
+    seed : int, optional
     """
     from ..metrics import RHom
-    from ...preprocessing.data_utils import fullmantel
+    from ...preprocessing.data_utils import column_mantel
+
+    rng = np.random.default_rng(seed)
 
     feats = features.values if hasattr(features, "values") else np.asarray(features)
     feats = np.asarray(feats, dtype=float)
     n = feats.shape[0]
-    half = max(1, n // 2)
+
+    use_anchor = anchor is not None
+    per_comp = bool(bypc or use_anchor)
+
+    # Fixed two-source split, when the caller's comparison was between two groups.
+    split_mask = None
+    if group_labels is not None:
+        lab = np.asarray(group_labels)
+        levels = pd.unique(lab)
+        if len(levels) == 2:
+            split_mask = (lab == levels[0])
 
     rhm_vals, phi_vals, sub_vals = [], [], []
     for _ in _progress_wrap(range(null_reps), total=null_reps, desc=desc, enabled=progress):
-        shuffled = fullmantel(pd.DataFrame(feats)).values
-        order = np.random.permutation(n)
-        a, b = shuffled[order[:half]], shuffled[order[half:]]
+        shuffled = column_mantel(feats, rng=rng)
+        shuffled = _standardize_within(shuffled, groupby_labels)
 
-        model = RHom(rd=shuffled, n_comp=npc, method=method, rotation=rotation, corr=corr)
+        if split_mask is not None:
+            a, b = shuffled[split_mask], shuffled[~split_mask]
+        else:
+            order = rng.permutation(n)
+            half = max(1, n // 2)
+            a, b = shuffled[order[:half]], shuffled[order[half:]]
+
+        target = shuffled if rd is None else rd
+        model = RHom(rd=target, n_comp=npc, method=method, rotation=rotation,
+                     corr=corr, bypc=per_comp,
+                     anchor=anchor if use_anchor else None)
         model.fit(a, b)
         preds = model.predict()
         corrs = np.corrcoef(preds[0], preds[1], rowvar=False)
 
-        rhm_vals.append(float(model.hom_pairs(corrs)))
-        phi_vals.append(float(model.pro_cong()))
+        rhm_vals.append(model.hom_pairs(corrs))
+        phi_vals.append(model.pro_cong())
         if subspace:
             s = model.subspace_sim()
             sub_vals.append(float(np.mean(s)) if isinstance(s, (list, tuple, np.ndarray)) else float(s))
 
-    return _null_summary(rhm_vals, phi_vals, sub_vals if subspace else None)
+    return _null_summary(rhm_vals, phi_vals, sub_vals if subspace else None,
+                         per_comp=per_comp, npc=npc)
 
 
-def _null_summary(rhm_data, phi_data=None, sub_data=None):
+def _null_summary(rhm_data, phi_data=None, sub_data=None, per_comp=False, npc=None):
     """
-    Summarize pooled permutation-null metric values into a per-metric chance reference.
+    Summarize permutation-null metric values into a per-metric chance reference.
 
-    Given the metric values produced by running an analysis on Mantel-shuffled data
+    Given the metric values produced by running an analysis on column-shuffled data
     (cross-variable structure destroyed), return ``{metric: {x, se, LCI, UCI}}`` -- the
     chance level and its 95% CI for each of rhm / phi / (sub). This is what the builtins
     attach to their results (``df.attrs["null"]``) and the plot helpers draw as a
     reference line / band, so "is my reproducibility above chance?" is answered in-figure
     rather than by a separate shuffled rerun.
+
+    With ``per_comp=True`` the rhm / phi inputs are lists of per-component lists; the
+    pooled scalar (mean across components, for backwards compatibility with plot helpers
+    that expect one number) is reported alongside a ``*_bypc`` list of per-component
+    dicts. Do not draw the pooled scalar as a per-component reference line unless the
+    per-component values are actually flat -- check ``*_bypc`` first. Subspace is a
+    whole-solution property and is never split per component.
     """
-    out = {"rhm": _summary_stats(rhm_data)}
-    if phi_data is not None:
-        out["phi"] = _summary_stats(phi_data)
-    if sub_data is not None:
-        out["sub"] = _summary_stats(sub_data)
+    def _pack(data):
+        arr = np.asarray(data, dtype=float)
+        if not per_comp:
+            return _summary_stats(arr), None
+        arr = arr.reshape(len(arr), -1)          # [reps x npc]
+        pooled = _summary_stats(arr.mean(axis=1))
+        bypc = [_summary_stats(arr[:, j]) for j in range(arr.shape[1])]
+        return pooled, bypc
+
+    out = {}
+    for name, data in (("rhm", rhm_data), ("phi", phi_data), ("sub", sub_data)):
+        if data is None:
+            continue
+        if name == "sub":
+            out[name] = _summary_stats(np.asarray(data, dtype=float))
+            continue
+        pooled, bypc = _pack(data)
+        out[name] = pooled
+        if bypc is not None:
+            out[f"{name}_bypc"] = bypc
     return out
 
 
@@ -115,17 +204,22 @@ def _build_row(n_comp, rhm_data, phi_data=None, sub_data=None, metadata=None):
     return row
 
 
-def _display_stats(header, rhm_stats, phi_stats):
+def _display_stats(header, row):
+    """
+    Pretty-print one summary row -- the flat dict returned by ``_build_row`` (keys
+    ``rhm_x`` / ``rhm_se`` / ``rhm_LCI`` / ``rhm_UCI``, and optionally ``phi_*`` /
+    ``sub_*``). Every builtin's ``display=True`` branch passes such a row directly.
+    """
+    def _line(label, prefix):
+        return (f"{label:<27}{row[f'{prefix}_x']:.3g} +/- {row[f'{prefix}_se']:.3g} "
+                f"95% CI[{row[f'{prefix}_LCI']:.3g}, {row[f'{prefix}_UCI']:.3g}]")
+
     print(f"{header}:\n" + "*" * 20)
-    print(
-        f"Mean Homologue Similarity: {rhm_stats['x']:.3g} +/- {rhm_stats['se']:.3g} "
-        f"95% CI[{rhm_stats['LCI']:.3g}, {rhm_stats['UCI']:.3g}]"
-    )
-    if phi_stats:
-        print(
-            f"Mean Factor Congruence:    {phi_stats['x']:.3g} +/- {phi_stats['se']:.3g} "
-            f"95% CI[{phi_stats['LCI']:.3g}, {phi_stats['UCI']:.3g}]"
-        )
+    print(_line("Mean Homologue Similarity:", "rhm"))
+    if "phi_x" in row:
+        print(_line("Mean Factor Congruence:", "phi"))
+    if "sub_x" in row:
+        print(_line("Mean Subspace Similarity:", "sub"))
     print("*" * 40)
 
 
