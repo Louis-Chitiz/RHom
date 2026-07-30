@@ -523,6 +523,41 @@ class pair_cv():
             yield (self._decomp_features(train, global_std=False),
                    self._decomp_features(folds[i], global_std=False), f"fold{i + 1}")
 
+    def holdout_index_split(self, X: Union[pd.DataFrame, np.ndarray]) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+        """
+        Positional ``(train_idx, test_idx)`` arrays mirroring ``holdout_split``'s partition.
+
+        Null-plumbing only. It lets ``_chance_reference`` reproduce the exact fold geometry
+        of the observed held-out CV -- the train/test sizes, the leave-one-group-out
+        asymmetry (G-1 groups vs one), and cluster grouping -- against the column-shuffled
+        matrix, instead of drawing symmetric random halves. Yields positional indices into
+        ``X``'s row order (0..n-1), so a caller can apply them directly to the shuffled
+        feature array.
+
+        Mirrors ``holdout_split``'s three-way dispatch and MUST stay in sync with it. It
+        never materializes decomposition features, so observed statistics are unaffected.
+        """
+        if not hasattr(X, "columns"):
+            X = pd.DataFrame(X)
+        Xr = X.reset_index(drop=True)          # positional 0..n-1 labels
+        all_pos = np.arange(len(Xr))
+
+        if (self.stratified_kfold and self.stratify is not None and self.stratify in Xr.columns):
+            for fold in self._stratified_make_folds(Xr):
+                test = fold.index.to_numpy()
+                yield np.setdiff1d(all_pos, test), test
+            return
+
+        if self.group is not None and self.group in Xr.columns:
+            for g in Xr[self.group].unique():
+                test = all_pos[(Xr[self.group] == g).to_numpy()]
+                yield np.setdiff1d(all_pos, test), test
+            return
+
+        for fold in self._make_folds(Xr):
+            test = fold.index.to_numpy()
+            yield np.setdiff1d(all_pos, test), test
+
     def resample_pairs(self, df: pd.DataFrame, subset: Optional[str] = None) -> Generator[List[pd.DataFrame], None, None]:
         """
         Generates a set of bootstrap reassignments of different subdivisions lazily.

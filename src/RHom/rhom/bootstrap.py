@@ -1,6 +1,6 @@
 from .._deps import pd, np, Any, Dict, Optional, warnings
 
-from ..preprocessing.data_utils import fullmantel
+from ..preprocessing.data_utils import column_mantel
 
 class BootstrapEngine:
     """
@@ -120,14 +120,33 @@ class BootstrapEngine:
         n_combos = (2 ** k) - 1
         return n_combos * n_combos
 
+    def _shuffle_features(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Column-shuffle ONLY the feature columns for the permutation-null path.
+
+        The cv's label columns (``group`` / ``cluster`` / ``stratify`` / ``groupby``) are
+        left intact so the downstream resampler still keeps whole clusters together,
+        stratifies, iterates groups, and standardizes within ``groupby`` -- and a *numeric*
+        ID column is never shuffled as if it were a feature (which would silently destroy
+        cluster integrity). ``column_mantel`` destroys the cross-feature structure while the
+        original column order and row index are preserved.
+        """
+        label_cols = [c for c in (getattr(self.cv, "group", None),
+                                  getattr(self.cv, "cluster", None),
+                                  getattr(self.cv, "stratify", None),
+                                  getattr(self.cv, "groupby", None))
+                      if c is not None and c in X.columns]
+        feat_cols = [c for c in X.columns if c not in label_cols]
+        X = X.copy()
+        X[feat_cols] = column_mantel(X[feat_cols])
+        return X
+
     def __call__(self, X: pd.DataFrame, y: Any, group: Optional[str] = None) -> Any:
         """Enables object instance to be called exactly like the original function."""
 
-        # Handle Full-Mantel Shuffling if requested
+        # Handle permutation shuffling if requested (see _shuffle_features).
         if self.shuffle:
-            # # Fallback protects against omitted 'group' strings in orchestration calls
-            # group_col = group or getattr(self.cv, 'group', None)
-            X = pd.DataFrame(fullmantel(X))
+            X = self._shuffle_features(X)
 
         # Resampling-profile dispatch (independent of output shape). "bypc" accepted
         # as a back-compat synonym for "asym" so old engine instances configured by

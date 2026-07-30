@@ -21,11 +21,11 @@ from ..metrics import RHom
 from ..resampling import pair_cv
 from ..bootstrap import BootstrapEngine
 
-from ._reporting import _build_row, _display_stats, _export_report, _chance_reference
+from ._reporting import _build_row, _display_stats, _export_report, _chance_reference, _resolve_null_seed
 
 
 def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-                boot=1000, save=True, display=False, plot=True, null=True, null_reps=200, cluster=None,
+                boot=1000, save=True, display=False, plot=True, null=True, null_reps=200, null_seed=None, cluster=None,
                 groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Omnibus-Sample Reproducibility
@@ -105,6 +105,12 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
 
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
+
         path: str, default='results'
             The path to the output directory.
 
@@ -180,12 +186,14 @@ def omni_sample(df=None, group=None, npc=None, method='svd', rotation="varimax",
     # Chance reference: similarity of two PCAs of Mantel-shuffled (structure-free) data.
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
                                      null_reps, progress, desc="Chance null (omnibus)",
                                      groupby_labels=(df[groupby].values if groupby else None),
-                                     group_labels=df[group].values)
+                                     group_labels=df[group].values, seed=null_seed)
         omsamp_df.attrs["null"] = null_ref
         omsamp_df.attrs["null_reps"] = null_reps
+        omsamp_df.attrs["null_seed"] = null_seed
 
     if plot:
         from ...visualization.rhomplots import plot_omni
@@ -381,7 +389,7 @@ def omni_variance(df=None, group=None, npc=None, method='svd', rotation='varimax
 
 
 def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-         folds=5, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
+         folds=5, save=True, plot=True, display=False, null=True, null_reps=200, null_seed=None, cluster=None,
          groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
 
     """
@@ -463,6 +471,12 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
 
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
+
         path: str, default='results'
             The path to the output directory.
 
@@ -539,12 +553,14 @@ def omsamp_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax",
     # the per-component chance is the same structure-free level).
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
                                      null_reps, progress, desc="Chance null (omnibus bypc)",
                                      groupby_labels=(df[groupby].values if groupby else None),
-                                     group_labels=df[group].values, bypc=True)
+                                     group_labels=df[group].values, bypc=True, seed=null_seed)
         stats_bypc.attrs["null"] = null_ref
         stats_bypc.attrs["null_reps"] = null_reps
+        stats_bypc.attrs["null_seed"] = null_seed
 
     if plot:
         # Fit basePCA on the exact omnibus half drawn in this call, so the wordclouds

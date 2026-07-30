@@ -160,4 +160,5 @@ def fullmantel(df):
         columns=numeric_df.columns,
     )
 
-    return pd.concat([metadata_df, shuffled_numeric], axis=1)
+    # Preserve the input column order (concat would otherwise emit metadata first).
+    return pd.concat([metadata_df, shuffled_numeric], axis=1)[df.columns]

@@ -21,11 +21,11 @@ from ..metrics import RHom
 from ..resampling import pair_cv
 from ..bootstrap import BootstrapEngine
 
-from ._reporting import _build_row, _display_stats, _export_report, _chance_reference
+from ._reporting import _build_row, _display_stats, _export_report, _chance_reference, _resolve_null_seed
 
 
 def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-             folds=5, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
+             folds=5, save=True, plot=True, display=False, null=True, null_reps=200, null_seed=None, cluster=None,
              groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility
@@ -95,9 +95,17 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
             If True, estimate the chance level by permutation (Mantel-shuffle the
             features, compare two PCAs) and attach it to ``df.attrs["null"]``. The heatmap
             then centres its colour scale on chance and annotates the chance level + CI.
+            The null projects onto the shuffled loadings, so both sides of the comparison
+            come from the same null world (the observed analysis projects onto real data).
 
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
+
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
 
         path: str, default='results'
             The path to the output directory.
@@ -172,12 +180,14 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
     # Chance reference: similarity of two PCAs of Mantel-shuffled (structure-free) data.
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
                                      null_reps, progress, desc="Chance null (dir-proj)",
                                      groupby_labels=(df[groupby].values if groupby else None),
-                                     group_labels=df[group].values)
+                                     group_labels=df[group].values, seed=null_seed)
         dirproj_df.attrs["null"] = null_ref
         dirproj_df.attrs["null_reps"] = null_reps
+        dirproj_df.attrs["null_seed"] = null_seed
 
     if plot:
         from ...visualization.rhomplots import plot_dirproj
@@ -202,7 +212,7 @@ def dir_proj(df=None, group=None, npc=None, method='svd', rotation="varimax", co
 
 
 def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax", corr='pearson',
-                  folds=5, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
+                  folds=5, save=True, plot=True, display=False, null=True, null_reps=200, null_seed=None, cluster=None,
                   groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Direct-Projection Reproducibility: By-Component
@@ -278,9 +288,17 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
             If True, estimate the chance level by permutation (Mantel-shuffle the
             features, compare two PCAs) and attach it to ``df.attrs["null"]``. The heatmap
             then centres its colour scale on chance and annotates the chance level + CI.
+            The null projects onto the shuffled loadings, so both sides of the comparison
+            come from the same null world (the observed analysis projects onto real data).
 
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
+
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
 
         path: str, default='results'
             The path to the output directory.
@@ -376,13 +394,15 @@ def dir_proj_bypc(df=None, group=None, npc=None, method='svd', rotation="varimax
     # Chance reference (single floor; under permutation per-component chance is uniform).
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         null_ref = _chance_reference(df[feat_cols], npc, method, rotation, corr, subspace,
                                      null_reps, progress, desc="Chance null (dir-proj bypc)",
                                      groupby_labels=(df[groupby].values if groupby else None),
                                      group_labels=df[group].values,
-                                     anchor=anchor_loadings, bypc=True)
+                                     anchor=anchor_loadings, bypc=True, seed=null_seed)
         dirproj_bypc_df.attrs["null"] = null_ref
         dirproj_bypc_df.attrs["null_reps"] = null_reps
+        dirproj_bypc_df.attrs["null_seed"] = null_seed
 
     if plot:
         # Persist anchor loadings alongside the stats CSV and attach to the returned

@@ -19,11 +19,11 @@ from ..metrics import RHom
 from ..resampling import pair_cv
 from ..bootstrap import BootstrapEngine
 
-from ._reporting import _build_row, _display_stats, _export_report, _chance_reference
+from ._reporting import _build_row, _display_stats, _export_report, _chance_reference, _resolve_null_seed
 
 
 def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
-              boot=1000, save=True, display=False, null=True, null_reps=200, cluster=None, stratify=None,
+              boot=1000, save=True, display=False, null=True, null_reps=200, null_seed=None, cluster=None, stratify=None,
               groupby=None, subspace=False, progress=True, path='results', file_prefix=randint(10000, 99999)):
     """
     Split-Half Reliability
@@ -100,6 +100,12 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
 
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
+
         path: str, default='results'
             The path to the output directory.
 
@@ -169,11 +175,14 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
     # Chance reference: similarity of two PCAs of Mantel-shuffled (structure-free) data.
     # Attached to attrs so plot_omni(split_df, ...) draws it; splithalf itself has no plot.
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         split_df.attrs["null"] = _chance_reference(df_t, npc, method, rotation, corr,
                                                    subspace, null_reps, progress,
                                                    desc="Chance null (split-half)",
-                                                   groupby_labels=(df[groupby].values if groupby else None))
+                                                   groupby_labels=(df[groupby].values if groupby else None),
+                                                   seed=null_seed)
         split_df.attrs["null_reps"] = null_reps
+        split_df.attrs["null_seed"] = null_seed
 
     if save:
         _export_report(split_df, path, file_prefix, f"splithalf_{len(df_t.columns)}D_{npc}PC")
@@ -182,7 +191,7 @@ def splithalf(df=None, group=None, npc=None, method='svd', rotation='varimax', c
 
 
 def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varimax', corr='pearson',
-                   boot=1000, save=True, plot=True, display=False, null=True, null_reps=200, cluster=None,
+                   boot=1000, save=True, plot=True, display=False, null=True, null_reps=200, null_seed=None, cluster=None,
                    stratify=None, groupby=None, subspace=False, progress=True,
                    path='results', file_prefix=randint(10000, 99999)):
     """
@@ -252,6 +261,12 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
 
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level.
+
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
 
         save / plot / display / path / file_prefix:
             Same conventions as the other builtins.
@@ -356,13 +371,15 @@ def splithalf_bypc(df=None, group=None, npc=None, method='svd', rotation='varima
     # Chance reference (single floor shown on every component panel).
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
         null_ref = _chance_reference(df_t, npc, method, rotation, corr, subspace,
                                      null_reps, progress, desc="Chance null (split-half bypc)",
                                      groupby_labels=(df[groupby].values if groupby else None),
                                      anchor=anchor_loadings_by_sample[samples[0]].to_numpy(),
-                                     bypc=True)
+                                     bypc=True, seed=null_seed)
         splithalf_bypc_df.attrs["null"] = null_ref
         splithalf_bypc_df.attrs["null_reps"] = null_reps
+        splithalf_bypc_df.attrs["null_seed"] = null_seed
 
     if plot:
         # Attach anchor loadings so plot_bypc can render wordclouds. When group is set

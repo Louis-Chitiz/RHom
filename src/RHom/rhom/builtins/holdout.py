@@ -30,7 +30,7 @@ from ...io.save import setupanalysis
 from ..metrics import RHom
 from ..resampling import pair_cv
 
-from ._reporting import _build_row, _display_stats, _export_report, _progress_wrap, _chance_reference
+from ._reporting import _build_row, _display_stats, _export_report, _progress_wrap, _chance_reference, _resolve_null_seed
 
 
 def _make_holdout_cv(group, folds, cluster, groupby=None):
@@ -133,7 +133,7 @@ def _holdout_blocks(cv, df_input, boot_model, subspace, boot, total_folds, mode,
 
 def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd',
                rotation='varimax', corr='pearson', cluster=None, groupby=None, save=True, plot=True,
-               display=False, null=True, null_reps=200, subspace=False, progress=True,
+               display=False, null=True, null_reps=200, null_seed=None, subspace=False, progress=True,
                path='results', file_prefix=randint(10000, 99999)):
     """
     Held-Out Cross-Validation
@@ -218,12 +218,21 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
             (destroying cross-variable structure), re-run the comparison ``null_reps``
             times, and attach the per-metric chance mean + 95% CI to ``df.attrs["null"]``.
             The saved figure then draws it as a dashed reference line + shaded band, so
-            "above chance?" is answered in-figure. Set False to skip.
+            "above chance?" is answered in-figure. The null reproduces this CV's fold
+            geometry (the same train/test sizes and leave-one-group-out asymmetry) and
+            projects onto the shuffled loadings, so both sides come from one null world.
+            Set False to skip.
 
         null_reps: int, default=200
             Number of shuffled permutation draws used to estimate the chance level. Kept
             small (a chance level + CI converges quickly) rather than matched to the real
             analysis, so it adds only a bounded overhead.
+
+        null_seed: int, optional
+            Seed for the permutation RNG. When omitted, a fresh random seed is drawn per
+            call; either way the seed actually used is recorded in ``df.attrs["null_seed"]``,
+            so the chance level + CI (and the band drawn on the figure) can be reproduced
+            later by passing it back as ``null_seed=``.
 
         save / plot / display / path / file_prefix:
             Same conventions as the other builtins.
@@ -316,12 +325,18 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
     # the principled "above chance?" baseline drawn on the figure.
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
+        # Reproduce the observed fold geometry in the null: one partition, cycled across
+        # reps, so LOGO's large-train/small-test asymmetry (and k-fold sizes) is matched.
+        fold_indices = list(cv.holdout_index_split(df_input))
         null_ref = _chance_reference(df_input[feat_cols], npc, method, rotation, corr,
                                      subspace, null_reps, progress, desc=f"Chance null ({mode})",
                                      groupby_labels=(df_input[groupby].values if groupby else None),
-                                     group_labels=(df_input[group].values if group is not None else None))
+                                     group_labels=(df_input[group].values if group is not None else None),
+                                     fold_indices=fold_indices, seed=null_seed)
         holdout_df.attrs["null"] = null_ref
         holdout_df.attrs["null_reps"] = null_reps
+        holdout_df.attrs["null_seed"] = null_seed
 
     if plot:
         from ...visualization.rhomplots import plot_omni
@@ -357,7 +372,7 @@ def holdout_cv(df=None, group=None, folds=None, boot=None, npc=None, method='svd
 
 def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='svd',
                  rotation='varimax', corr='pearson', cluster=None, groupby=None, save=True, plot=True,
-                 display=False, null=True, null_reps=200, subspace=False, progress=True,
+                 display=False, null=True, null_reps=200, null_seed=None, subspace=False, progress=True,
                  path='results', file_prefix=randint(10000, 99999)):
     """
     Held-Out Cross-Validation: By-Component
@@ -382,7 +397,7 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
         df: pd.Dataframe, default=None
             Decomposition columns plus the grouping / clustering columns if used.
 
-        group / folds / boot / cluster / groupby / subspace / corr / npc / rotation / null / null_reps:
+        group / folds / boot / cluster / groupby / subspace / corr / npc / rotation / null / null_reps / null_seed:
             Same meaning as in ``holdout_cv``.
 
         save / plot / display / path / file_prefix:
@@ -493,13 +508,16 @@ def holdout_bypc(df=None, group=None, folds=None, boot=None, npc=None, method='s
     # Chance reference (single floor shown on every component panel).
     null_ref = None
     if null:
+        null_seed = _resolve_null_seed(null_seed)
+        fold_indices = list(cv.holdout_index_split(df_input))
         null_ref = _chance_reference(df_input[feat_cols], npc, method, rotation, corr,
                                      subspace, null_reps, progress, desc=f"Chance null bypc ({mode})",
                                      groupby_labels=(df_input[groupby].values if groupby else None),
                                      group_labels=(df_input[group].values if group is not None else None),
-                                     anchor=anchor, bypc=True)
+                                     fold_indices=fold_indices, anchor=anchor, bypc=True, seed=null_seed)
         holdout_bypc_df.attrs["null"] = null_ref
         holdout_bypc_df.attrs["null_reps"] = null_reps
+        holdout_bypc_df.attrs["null_seed"] = null_seed
 
     if plot:
         from ...visualization.rhomplots import plot_bypc
